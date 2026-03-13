@@ -1,15 +1,35 @@
 // Listen for messages from your content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'process_image_url') {
-        fetchAndProcessImage(request.imageUrl)
+        handleTranslationRequestWithCache(request.imageUrl)
             .then(data => sendResponse({ success: true, data }))
             .catch(error => sendResponse({ success: false, error: error.message }));
 
-        return true; // Keeps the message channel open for async response
+        return true;
     }
 });
 
-// New function to handle the fetch bypassing CORS
+async function handleTranslationRequestWithCache(imageUrl) {
+    const cacheKey = `manga_cache_${imageUrl}`;
+
+    // 1. Check Chrome's local storage for this specific image URL
+    const cachedData = await chrome.storage.local.get([cacheKey]);
+
+    if (cachedData[cacheKey]) {
+        console.log("MangaLens: Serving from cache!");
+        return cachedData[cacheKey]; // Instant return, no API call
+    }
+
+    // 2. If not cached, proceed with the normal fetch and Gemini processing
+    console.log("MangaLens: No cache found, fetching from Gemini...");
+    const freshData = await fetchAndProcessImage(imageUrl);
+
+    // 3. Save the result to cache for next time
+    await chrome.storage.local.set({ [cacheKey]: freshData });
+
+    return freshData;
+}
+
 async function fetchAndProcessImage(imageUrl) {
     try {
         // Fetch the image as a blob
