@@ -1,6 +1,4 @@
-// ==========================================
-// SPA ROUTING LISTENER (Zero-Latency Cleanup)
-// ==========================================
+// SPA routing listener
 if (window.navigation) {
     window.navigation.addEventListener('navigate', fullReset);
 }
@@ -22,9 +20,7 @@ function fullReset() {
     }, 100);
 }
 
-// ==========================================
-// 1. MUTATION OBSERVER (High Performance)
-// ==========================================
+// Mutation observer
 function processImage(img) {
     if (img.clientWidth > 400 && img.clientHeight > 500 && !img.dataset.hasMangaLensBtn) {
         img.dataset.hasMangaLensBtn = "true";
@@ -57,14 +53,12 @@ const observer = new MutationObserver((mutations) => {
 });
 observer.observe(document.body, { childList: true, subtree: true });
 
-// ==========================================
-// 2. INLINE BUTTON LOGIC
-// ==========================================
+
 function injectInlineButton(targetImage) {
     const btn = document.createElement('button');
     btn.innerText = '✨';
     btn.className = 'mangalens-inline-btn';
-    btn.style.position = 'absolute'; // Ensure it floats correctly
+    btn.style.position = 'absolute';
     document.body.appendChild(btn);
 
     btn.addEventListener('click', async () => {
@@ -88,9 +82,8 @@ function injectInlineButton(targetImage) {
     requestAnimationFrame(syncBtn);
 }
 
-// ==========================================
-// 3. FULL TRANSLATION PIPELINE
-// ==========================================
+
+// Translation pipeline
 async function injectTranslationUI(targetImage = null) {
     // Only wipe existing overlays, leave the buttons alone during an active translation
     document.querySelectorAll('.mangalens-container, .mangalens-loader').forEach(el => el.remove());
@@ -170,11 +163,8 @@ async function injectTranslationUI(targetImage = null) {
     }
 }
 
-// ==========================================
-// 4. HELPERS
-// ==========================================
+
 function keepOverlaySynced(overlayElement, targetImage) {
-    // BUG FIX: Ensure the container is absolutely positioned so coordinates work
     overlayElement.style.position = 'absolute';
 
     function sync() {
@@ -196,6 +186,7 @@ function keepOverlaySynced(overlayElement, targetImage) {
     }
     requestAnimationFrame(sync);
 }
+
 
 function injectStyles() {
     if (document.getElementById('mangalens-styles')) return;
