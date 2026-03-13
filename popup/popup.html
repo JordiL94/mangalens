@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<div class="container">
+    <header>
+        <div class="brand">
+            <h1>MangaLens</h1>
+            <span class="badge">Gemini 3 Flash</span>
+        </div>
+        <p class="subtitle">AI Contextual Translation</p>
+    </header>
+
+    <div class="card">
+        <div class="input-group">
+            <label for="apiKey">Google AI Studio API Key</label>
+            <input type="password" id="apiKey" placeholder="AIzaSy..." autocomplete="off" />
+        </div>
+        <button id="saveBtn" class="btn btn-secondary">Save Key</button>
+    </div>
+
+    <div class="action-area">
+        <button id="translateBtn" class="btn btn-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>
+            Translate Current Page
+        </button>
+    </div>
+</div>
+<script src="popup.js"></script>
+</body>
+</html>
