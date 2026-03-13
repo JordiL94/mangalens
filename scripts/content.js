@@ -20,6 +20,13 @@ function fullReset() {
     }, 100);
 }
 
+// Listen for the trigger from popup.js
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "translate_page") {
+        injectTranslationUI();
+    }
+});
+
 // Mutation observer
 function processImage(img) {
     if (img.clientWidth > 400 && img.clientHeight > 500 && !img.dataset.hasMangaLensBtn) {
