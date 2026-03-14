@@ -52,14 +52,12 @@ async function fetchAndProcessImage(imageUrl) {
 }
 
 async function handleImageTranslation(base64Image) {
-    // 1. Get the API key AND the selected model
     const { geminiApiKey, selectedModel } = await chrome.storage.local.get(['geminiApiKey', 'selectedModel']);
 
     if (!geminiApiKey) {
         throw new Error('API Key not found. Please save it in the MangaLens popup.');
     }
 
-    // 2. Set the default if the user hasn't saved one yet
     const modelToUse = selectedModel || 'gemini-3-flash-preview';
 
     const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
@@ -73,7 +71,7 @@ async function handleImageTranslation(base64Image) {
     Provide the bounding box as an array of 4 integers between 0 and 1000: [ymin, xmin, ymax, xmax].
   `;
 
-    // 3. THE FIX: The URL now dynamically injects ${modelToUse}
+
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

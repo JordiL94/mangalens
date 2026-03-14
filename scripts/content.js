@@ -145,10 +145,18 @@ async function injectTranslationUI(targetImage = null) {
             bubble.className = 'mangalens-bubble';
             bubble.innerText = item.translation;
 
-            bubble.style.top = `${ymin / 10}%`;
-            bubble.style.left = `${xmin / 10}%`;
-            bubble.style.height = `${(ymax - ymin) / 10}%`;
+            // 1. Calculate the true center of the Japanese bubble
+            const centerY = (ymin + ymax) / 20;
+            const centerX = (xmin + xmax) / 20;
+
+            // 2. Pin the exact center of our HTML div to the center of the Japanese text
+            bubble.style.top = `${centerY}%`;
+            bubble.style.left = `${centerX}%`;
+            bubble.style.transform = 'translate(-50%, -50%)';
+
+            // 3. Set dynamic width/height allowing for text expansion
             bubble.style.width = `${(xmax - xmin) / 10}%`;
+            bubble.style.minHeight = `${(ymax - ymin) / 10}%`;
 
             overlayContainer.appendChild(bubble);
         });
@@ -224,8 +232,12 @@ function injectStyles() {
       text-align: center;
       pointer-events: auto;
       transition: opacity 0.2s ease;
-      overflow: hidden;
       box-sizing: border-box;
+      min-width: 80px;
+      height: auto;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      hyphens: auto;
     }
     .mangalens-bubble:hover {
       opacity: 0;
