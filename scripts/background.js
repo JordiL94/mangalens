@@ -52,14 +52,18 @@ async function fetchAndProcessImage(imageUrl) {
 }
 
 async function handleImageTranslation(base64Image) {
-    const { geminiApiKey } = await chrome.storage.local.get(['geminiApiKey']);
+    // 1. Get the API key AND the selected model
+    const { geminiApiKey, selectedModel } = await chrome.storage.local.get(['geminiApiKey', 'selectedModel']);
+
     if (!geminiApiKey) {
         throw new Error('API Key not found. Please save it in the MangaLens popup.');
     }
 
+    // 2. Set the default if the user hasn't saved one yet
+    const modelToUse = selectedModel || 'gemini-3-flash-preview';
+
     const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
 
-    // Updated prompt utilizing Gemini's native 1000x1000 spatial grid
     const prompt = `
     You are an expert manga translator and OCR system. 
     Carefully scan the ENTIRE image and identify EVERY distinct block of text. This includes speech bubbles, text on phone screens, thought bubbles, and background text.
@@ -67,10 +71,10 @@ async function handleImageTranslation(base64Image) {
     
     For spatial coordinates, you must use Gemini's native 1000x1000 grid. 
     Provide the bounding box as an array of 4 integers between 0 and 1000: [ymin, xmin, ymax, xmax].
-    (ymin = top edge, xmin = left edge, ymax = bottom edge, xmax = right edge)
   `;
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`, {
+    // 3. THE FIX: The URL now dynamically injects ${modelToUse}
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -83,10 +87,7 @@ async function handleImageTranslation(base64Image) {
             generationConfig: {
                 response_mime_type: "application/json",
                 temperature: 1.0,
-                thinking_config: {
-                    thinking_level: "low"
-                },
-                // Enforcing a strict schema guarantees we get coordinates for every translation
+                thinking_config: { thinking_level: "low" },
                 responseSchema: {
                     type: "ARRAY",
                     items: {
@@ -95,8 +96,7 @@ async function handleImageTranslation(base64Image) {
                             translation: { type: "STRING" },
                             box_2d: {
                                 type: "ARRAY",
-                                items: { type: "INTEGER" },
-                                description: "[ymin, xmin, ymax, xmax] from 0 to 1000"
+                                items: { type: "INTEGER" }
                             }
                         },
                         required: ["translation", "box_2d"]
