@@ -8,6 +8,15 @@
     "activeTab",
     "scripting"
   ],
+  "commands": {
+    "translate_current_panel": {
+      "suggested_key": {
+        "default": "Alt+T",
+        "mac": "MacCtrl+T"
+      },
+      "description": "Translate the manga panel in the center of the screen"
+    }
+  },
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",
     "<all_urls>"

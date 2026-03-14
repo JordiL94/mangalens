@@ -9,6 +9,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
+// Listen for the keyboard shortcut
+chrome.commands.onCommand.addListener(async (command) => {
+    if (command === "translate_current_panel") {
+        // Find the active tab and tell the content script to run the translation
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) {
+            chrome.tabs.sendMessage(tab.id, { action: "translate_page" });
+        }
+    }
+});
+
 async function handleTranslationRequestWithCache(imageUrl) {
     const cacheKey = `manga_cache_${imageUrl}`;
 

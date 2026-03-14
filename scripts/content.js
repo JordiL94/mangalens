@@ -29,17 +29,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // Mutation observer
 function processImage(img) {
-    if (img.clientWidth > 400 && img.clientHeight > 500 && !img.dataset.hasMangaLensBtn) {
-        img.dataset.hasMangaLensBtn = "true";
-        injectInlineButton(img);
-    } else if (!img.complete) {
-        img.addEventListener('load', () => {
-            if (img.clientWidth > 400 && img.clientHeight > 500 && !img.dataset.hasMangaLensBtn) {
-                img.dataset.hasMangaLensBtn = "true";
-                injectInlineButton(img);
-            }
-        }, { once: true });
-    }
+    if (img.dataset.hasMangaLensBtn) return;
+
+    // We keep our safe thresholds to ensure we only target actual manga panels
+    const MIN_WIDTH = 300;
+    const MIN_HEIGHT = 400;
+
+    const tryAttach = () => {
+        if (img.clientWidth > MIN_WIDTH && img.clientHeight > MIN_HEIGHT && !img.dataset.hasMangaLensBtn) {
+            img.dataset.hasMangaLensBtn = "true";
+            injectInlineButton(img);
+            return true;
+        }
+        return false;
+    };
+
+    // 1. Check immediately in case it's already rendered
+    if (tryAttach()) return;
+
+    // 2. The Magic Fix: Watch the image for layout shifts.
+    // When the lazy-loader injects the real image and it expands past our thresholds, this fires instantly.
+    const resizeObserver = new ResizeObserver(() => {
+        if (tryAttach()) {
+            resizeObserver.disconnect(); // Stop watching once we tag it to save CPU
+        }
+    });
+    resizeObserver.observe(img);
 }
 
 document.querySelectorAll('img').forEach(processImage);
@@ -61,54 +76,109 @@ const observer = new MutationObserver((mutations) => {
 observer.observe(document.body, { childList: true, subtree: true });
 
 
+// ==========================================
+// 2. INLINE BUTTON LOGIC
+// ==========================================
 function injectInlineButton(targetImage) {
     const btn = document.createElement('button');
     btn.innerText = '✨';
     btn.className = 'mangalens-inline-btn';
-    btn.style.position = 'absolute';
-    document.body.appendChild(btn);
 
-    btn.addEventListener('click', async () => {
+    // Force rendering & interaction on top
+    btn.style.position = 'absolute';
+    btn.style.zIndex = '2147483647';
+    btn.style.setProperty('pointer-events', 'auto', 'important'); // Break out of inherited ghosting
+
+    const container = targetImage.offsetParent || document.body;
+    container.appendChild(btn);
+
+    // THE SHIELD: Only stop propagation, don't prevent default on down/up states
+    const stopHijack = (e) => e.stopPropagation();
+
+    btn.addEventListener('mousedown', stopHijack);
+    btn.addEventListener('mouseup', stopHijack);
+    btn.addEventListener('pointerdown', stopHijack);
+    btn.addEventListener('pointerup', stopHijack);
+
+    // The actual click listener
+    btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        console.log("MangaLens: Button clicked on panel!"); // Debug check
+
+        if (btn.innerText === '⏳') return;
+
         btn.innerText = '⏳';
         await injectTranslationUI(targetImage);
-        if (btn.isConnected) btn.innerText = '✨'; // Only reset if button still exists
+        if (btn.isConnected) btn.innerText = '✨';
     });
 
-    // Use the render loop to tie the button's lifecycle to the image
     function syncBtn() {
-        // If the site destroys the image, destroy the button instantly
         if (!targetImage.isConnected) {
             btn.remove();
             return;
         }
-        const rect = targetImage.getBoundingClientRect();
-        btn.style.top = `${rect.top + window.scrollY + 16}px`;
-        btn.style.left = `${rect.left + window.scrollX + 16}px`;
+
+        const imgRect = targetImage.getBoundingClientRect();
+        let newTop, newLeft;
+
+        if (container === document.body) {
+            newTop = `${imgRect.top + window.scrollY + 16}px`;
+            newLeft = `${imgRect.left + window.scrollX + 16}px`;
+        } else {
+            const containerRect = container.getBoundingClientRect();
+            newTop = `${(imgRect.top - containerRect.top) + container.scrollTop + 16}px`;
+            newLeft = `${(imgRect.left - containerRect.left) + container.scrollLeft + 16}px`;
+        }
+
+        if (btn.style.top !== newTop) btn.style.top = newTop;
+        if (btn.style.left !== newLeft) btn.style.left = newLeft;
+
         requestAnimationFrame(syncBtn);
     }
     requestAnimationFrame(syncBtn);
 }
 
+// Helper to find the image closest to the vertical center of the viewport
+function getCenterImage() {
+    // Only look at images that meet our manga panel size thresholds
+    const images = Array.from(document.querySelectorAll('img')).filter(img =>
+        img.clientWidth > 300 && img.clientHeight > 400
+    );
+
+    if (images.length === 0) return null;
+
+    const viewportCenter = window.innerHeight / 2;
+    let closestImage = null;
+    let minDistance = Infinity;
+
+    images.forEach(img => {
+        const rect = img.getBoundingClientRect();
+        const imageCenter = rect.top + (rect.height / 2);
+        const distance = Math.abs(viewportCenter - imageCenter);
+
+        if (distance < minDistance) {
+            minDistance = distance;
+            closestImage = img;
+        }
+    });
+
+    return closestImage;
+}
 
 // Translation pipeline
 async function injectTranslationUI(targetImage = null) {
-    // Only wipe existing overlays, leave the buttons alone during an active translation
+// Only wipe existing overlays
     document.querySelectorAll('.mangalens-container, .mangalens-loader').forEach(el => el.remove());
 
+    // THE FIX: If triggered from the popup or hotkey, grab the centered image
     if (!targetImage) {
-        const images = Array.from(document.querySelectorAll('img'));
-        let maxArea = 0;
-        images.forEach(img => {
-            const area = img.clientWidth * img.clientHeight;
-            if (area > maxArea) {
-                maxArea = area;
-                targetImage = img;
-            }
-        });
+        targetImage = getCenterImage();
     }
 
     if (!targetImage) {
-        alert("MangaLens: Couldn't find a suitable image.");
+        alert("MangaLens: Couldn't find a suitable manga panel on screen.");
         return;
     }
 
@@ -179,18 +249,35 @@ async function injectTranslationUI(targetImage = null) {
 }
 
 
+// ==========================================
+// 4. HELPERS
+// ==========================================
 function keepOverlaySynced(overlayElement, targetImage) {
     overlayElement.style.position = 'absolute';
+
+    // Move the overlay from the body into the scrolling container
+    const container = targetImage.offsetParent || document.body;
+    if (overlayElement.parentElement !== container) {
+        container.appendChild(overlayElement);
+    }
 
     function sync() {
         if (!overlayElement.isConnected || !targetImage.isConnected) return;
 
-        const rect = targetImage.getBoundingClientRect();
+        const imgRect = targetImage.getBoundingClientRect();
+        let newTop, newLeft;
 
-        const newTop = `${rect.top + window.scrollY}px`;
-        const newLeft = `${rect.left + window.scrollX}px`;
-        const newWidth = `${rect.width}px`;
-        const newHeight = `${rect.height}px`;
+        if (container === document.body) {
+            newTop = `${imgRect.top + window.scrollY}px`;
+            newLeft = `${imgRect.left + window.scrollX}px`;
+        } else {
+            const containerRect = container.getBoundingClientRect();
+            newTop = `${(imgRect.top - containerRect.top) + container.scrollTop}px`;
+            newLeft = `${(imgRect.left - containerRect.left) + container.scrollLeft}px`;
+        }
+
+        const newWidth = `${imgRect.width}px`;
+        const newHeight = `${imgRect.height}px`;
 
         if (overlayElement.style.top !== newTop) overlayElement.style.top = newTop;
         if (overlayElement.style.left !== newLeft) overlayElement.style.left = newLeft;
