@@ -1,4 +1,4 @@
-// Listen for messages from your content script
+// Listen for messages from content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'process_image_url') {
         handleTranslationRequestWithCache(request.imageUrl)
@@ -6,13 +6,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .catch(error => sendResponse({ success: false, error: error.message }));
 
         return true;
+    } else if (request.action === 'process_screenshot') {
+        // Chrome's native API takes a Base64 snapshot of the current tab
+        chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: 'jpeg', quality: 80 }, async (dataUrl) => {
+            try {
+                // Bypass the cache and feed the screenshot directly into Gemini function
+                const data = await handleImageTranslation(dataUrl);
+                sendResponse({ success: true, data });
+            } catch (error) {
+                sendResponse({ success: false, error: error.message });
+            }
+        });
+        return true;
     }
 });
 
-// Listen for the keyboard shortcut
+// Keyboard shortcut listener
 chrome.commands.onCommand.addListener(async (command) => {
     if (command === "translate_current_panel") {
-        // Find the active tab and tell the content script to run the translation
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab) {
             chrome.tabs.sendMessage(tab.id, { action: "translate_page" });

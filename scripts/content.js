@@ -20,6 +20,26 @@ function fullReset() {
     }, 100);
 }
 
+// Button positioned on panel visibility state
+let showButtonsConfig = true;
+
+chrome.storage.local.get(['showInlineBtns'], (result) => {
+    if (result.showInlineBtns !== undefined) {
+        showButtonsConfig = result.showInlineBtns;
+    }
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "translate_page") {
+        injectTranslationUI();
+    } else if (request.action === "toggle_buttons") {
+        showButtonsConfig = request.show;
+        document.querySelectorAll('.mangalens-inline-btn').forEach(btn => {
+            btn.style.display = showButtonsConfig ? 'block' : 'none';
+        });
+    }
+});
+
 // Listen for the trigger from popup.js
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "translate_page") {
@@ -31,7 +51,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 function processImage(img) {
     if (img.dataset.hasMangaLensBtn) return;
 
-    // We keep our safe thresholds to ensure we only target actual manga panels
+    // Safe thresholds to ensure only actual manga panels are targeted
     const MIN_WIDTH = 300;
     const MIN_HEIGHT = 400;
 
@@ -44,14 +64,11 @@ function processImage(img) {
         return false;
     };
 
-    // 1. Check immediately in case it's already rendered
     if (tryAttach()) return;
 
-    // 2. The Magic Fix: Watch the image for layout shifts.
-    // When the lazy-loader injects the real image and it expands past our thresholds, this fires instantly.
     const resizeObserver = new ResizeObserver(() => {
         if (tryAttach()) {
-            resizeObserver.disconnect(); // Stop watching once we tag it to save CPU
+            resizeObserver.disconnect();
         }
     });
     resizeObserver.observe(img);
@@ -76,23 +93,19 @@ const observer = new MutationObserver((mutations) => {
 observer.observe(document.body, { childList: true, subtree: true });
 
 
-// ==========================================
-// 2. INLINE BUTTON LOGIC
-// ==========================================
+// Button positioned on panels
 function injectInlineButton(targetImage) {
     const btn = document.createElement('button');
     btn.innerText = '✨';
     btn.className = 'mangalens-inline-btn';
+    btn.style.display = showButtonsConfig ? 'block' : 'none';
 
-    // Force rendering & interaction on top
     btn.style.position = 'absolute';
-    btn.style.zIndex = '2147483647';
-    btn.style.setProperty('pointer-events', 'auto', 'important'); // Break out of inherited ghosting
+    btn.style.setProperty('pointer-events', 'auto'); // Break out of inherited ghosting
 
     const container = targetImage.offsetParent || document.body;
     container.appendChild(btn);
 
-    // THE SHIELD: Only stop propagation, don't prevent default on down/up states
     const stopHijack = (e) => e.stopPropagation();
 
     btn.addEventListener('mousedown', stopHijack);
@@ -100,12 +113,9 @@ function injectInlineButton(targetImage) {
     btn.addEventListener('pointerdown', stopHijack);
     btn.addEventListener('pointerup', stopHijack);
 
-    // The actual click listener
     btn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
-
-        console.log("MangaLens: Button clicked on panel!"); // Debug check
 
         if (btn.innerText === '⏳') return;
 
@@ -142,7 +152,7 @@ function injectInlineButton(targetImage) {
 
 // Helper to find the image closest to the vertical center of the viewport
 function getCenterImage() {
-    // Only look at images that meet our manga panel size thresholds
+    // Only look at images that meet manga panel size thresholds
     const images = Array.from(document.querySelectorAll('img')).filter(img =>
         img.clientWidth > 300 && img.clientHeight > 400
     );
@@ -169,33 +179,48 @@ function getCenterImage() {
 
 // Translation pipeline
 async function injectTranslationUI(targetImage = null) {
-// Only wipe existing overlays
     document.querySelectorAll('.mangalens-container, .mangalens-loader').forEach(el => el.remove());
 
-    // THE FIX: If triggered from the popup or hotkey, grab the centered image
+    let isScreenshotMode = false;
+
+    // 1. Try to find a standard manga image
     if (!targetImage) {
         targetImage = getCenterImage();
     }
 
+    // 2. THE FALLBACK: No image found (BookWalker Canvas). Switch to Screenshot mode!
     if (!targetImage) {
-        alert("MangaLens: Couldn't find a suitable manga panel on screen.");
-        return;
+        isScreenshotMode = true;
     }
 
     injectStyles();
 
     const loader = document.createElement('div');
     loader.className = 'mangalens-loader';
-    loader.innerHTML = '<div class="spinner"></div><p>Gemini is translating...</p>';
-    document.body.appendChild(loader);
+    loader.innerHTML = '<div class="spinner"></div><p>Gemini is scanning...</p>';
 
-    keepOverlaySynced(loader, targetImage);
+    // Position the loader based on the mode
+    if (isScreenshotMode) {
+        loader.style.position = 'fixed';
+        loader.style.top = '0';
+        loader.style.left = '0';
+        loader.style.width = '100vw';
+        loader.style.height = '100vh';
+        document.body.appendChild(loader);
+    } else {
+        document.body.appendChild(loader);
+        keepOverlaySynced(loader, targetImage);
+    }
 
     try {
-        const response = await chrome.runtime.sendMessage({
-            action: 'process_image_url',
-            imageUrl: targetImage.src
-        });
+        let response;
+
+        // 3. Route the request based on the mode
+        if (isScreenshotMode) {
+            response = await chrome.runtime.sendMessage({ action: 'process_screenshot' });
+        } else {
+            response = await chrome.runtime.sendMessage({ action: 'process_image_url', imageUrl: targetImage.src });
+        }
 
         loader.remove();
 
@@ -207,6 +232,15 @@ async function injectTranslationUI(targetImage = null) {
         const overlayContainer = document.createElement('div');
         overlayContainer.className = 'mangalens-container';
 
+        // Lock the container to the entire viewport for screenshots
+        if (isScreenshotMode) {
+            overlayContainer.style.position = 'fixed';
+            overlayContainer.style.top = '0';
+            overlayContainer.style.left = '0';
+            overlayContainer.style.width = '100vw';
+            overlayContainer.style.height = '100vh';
+        }
+
         const translations = response.data;
         translations.forEach(item => {
             const [ymin, xmin, ymax, xmax] = item.box_2d;
@@ -215,16 +249,12 @@ async function injectTranslationUI(targetImage = null) {
             bubble.className = 'mangalens-bubble';
             bubble.innerText = item.translation;
 
-            // 1. Calculate the true center of the Japanese bubble
             const centerY = (ymin + ymax) / 20;
             const centerX = (xmin + xmax) / 20;
 
-            // 2. Pin the exact center of our HTML div to the center of the Japanese text
             bubble.style.top = `${centerY}%`;
             bubble.style.left = `${centerX}%`;
             bubble.style.transform = 'translate(-50%, -50%)';
-
-            // 3. Set dynamic width/height allowing for text expansion
             bubble.style.width = `${(xmax - xmin) / 10}%`;
             bubble.style.minHeight = `${(ymax - ymin) / 10}%`;
 
@@ -232,26 +262,30 @@ async function injectTranslationUI(targetImage = null) {
         });
 
         document.body.appendChild(overlayContainer);
-        keepOverlaySynced(overlayContainer, targetImage);
 
-        // Watch this specific image. If the site swaps its 'src', trigger a full reset
-        const srcObserver = new MutationObserver(() => {
-            fullReset();
-            srcObserver.disconnect();
-        });
-        srcObserver.observe(targetImage, { attributes: true, attributeFilter: ['src'] });
+        // 4. Handle Cleanup
+        if (isScreenshotMode) {
+            const cleanup = () => removeExistingOverlays();
+            window.addEventListener('scroll', cleanup, { once: true });
+            window.addEventListener('resize', cleanup, { once: true });
+        } else {
+            keepOverlaySynced(overlayContainer, targetImage);
+            const srcObserver = new MutationObserver(() => {
+                fullReset();
+                srcObserver.disconnect();
+            });
+            srcObserver.observe(targetImage, { attributes: true, attributeFilter: ['src'] });
+        }
 
     } catch (error) {
-        loader.remove();
+        if (loader) loader.remove();
         console.error("MangaLens runtime error:", error);
         alert("An unexpected error occurred. Check the console.");
     }
 }
 
 
-// ==========================================
-// 4. HELPERS
-// ==========================================
+// Helpers
 function keepOverlaySynced(overlayElement, targetImage) {
     overlayElement.style.position = 'absolute';
 
