@@ -1,6 +1,10 @@
 // State & configuration
 let showButtonsConfig = true;
 
+// Detect OS to show the correct keyboard shortcut in tooltips
+const isMac = navigator.userAgent.includes('Mac');
+const modKey = isMac ? 'Ctrl' : 'Alt';
+
 chrome.storage.local.get(['showInlineBtns'], (result) => {
     if (result.showInlineBtns !== undefined) {
         showButtonsConfig = result.showInlineBtns;
@@ -16,10 +20,13 @@ window.addEventListener('popstate', fullReset);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "translate_page") {
-        injectTranslationUI();
+        injectTranslationUI(null, request.shortcutScreenshot);
+    } else if (request.action === "reload_page") {
+        handleReloadShortcut(request.shortcutScreenshot);
+    } else if (request.action === "toggle_visibility") {
+        handleToggleShortcut();
     } else if (request.action === "toggle_buttons") {
         showButtonsConfig = request.show;
-
         document.querySelectorAll('.mangalens-inline-btn').forEach(btn => {
             if (!showButtonsConfig) {
                 btn.style.display = 'none';
@@ -90,7 +97,7 @@ function processImage(img) {
     resizeObserver.observe(img);
 }
 
-async function injectTranslationUI(targetImage = null) {
+async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
     let isScreenshotMode = false;
 
     if (!targetImage) targetImage = getCenterImage();
@@ -110,6 +117,7 @@ async function injectTranslationUI(targetImage = null) {
 
         if (linkedMainBtn && linkedMainBtn.innerText !== '⏳') {
             linkedMainBtn.innerText = '⏳';
+            linkedMainBtn.title = 'Translating...';
             if (linkedRefreshBtn) linkedRefreshBtn.style.display = 'none';
         }
     }
@@ -148,7 +156,14 @@ async function injectTranslationUI(targetImage = null) {
         let response;
 
         if (isScreenshotMode) {
-            response = await chrome.runtime.sendMessage({ action: 'process_screenshot' });
+            if (shortcutPayload) {
+                response = await chrome.runtime.sendMessage({
+                    action: 'process_base64_screenshot',
+                    dataUrl: shortcutPayload
+                });
+            } else {
+                response = await chrome.runtime.sendMessage({ action: 'process_screenshot' });
+            }
         } else {
             response = await chrome.runtime.sendMessage({ action: 'process_image_url', imageUrl: targetImage.src });
         }
@@ -195,17 +210,33 @@ async function injectTranslationUI(targetImage = null) {
 
         document.body.appendChild(overlayContainer);
 
-        if (linkedMainBtn) linkedMainBtn.innerText = '👁️';
+        if (linkedMainBtn) {
+            linkedMainBtn.innerText = '👁️';
+            linkedMainBtn.title = `Hide Translations (${modKey} + H)`;
+        }
         if (linkedRefreshBtn && showButtonsConfig) linkedRefreshBtn.style.display = 'block';
 
         // Event cleanup
         if (isScreenshotMode) {
-            const cleanup = () => {
+            const cleanup = (e) => {
+                // If it's a key press, ONLY clear the UI if it's an arrow key or spacebar (pagination keys)
+                if (e && e.type === 'keydown' && !['ArrowRight', 'ArrowLeft', 'Space', 'KeyH', 'KeyJ'].includes(e.code)) return;
+
                 document.querySelectorAll('.mangalens-container').forEach(el => el.remove());
+
+                // Remove listeners so they don't pile up
+                window.removeEventListener('mousedown', cleanup);
+                window.removeEventListener('keydown', cleanup);
+                window.removeEventListener('scroll', cleanup);
+                window.removeEventListener('resize', cleanup);
             };
+
+            // Listen for canvas type panel viewers page turn actions
+            window.addEventListener('mousedown', cleanup); // Catch mouse clicks on the canvas
+            window.addEventListener('keydown', cleanup);   // Catch keyboard page turns
             window.addEventListener('scroll', cleanup, { once: true });
             window.addEventListener('resize', cleanup, { once: true });
-        } else {
+        } else{
             keepOverlaySynced(overlayContainer, targetImage);
             const srcObserver = new MutationObserver(() => {
                 fullReset();
@@ -216,7 +247,10 @@ async function injectTranslationUI(targetImage = null) {
 
     } catch (error) {
         if (loader) loader.remove();
-        if (linkedMainBtn) linkedMainBtn.innerText = '✨';
+        if (linkedMainBtn) {
+            linkedMainBtn.innerText = '✨';
+            linkedMainBtn.title = `Translate Panel (${modKey} + T)`;
+        }
         console.error("MangaLens runtime error:", error);
     }
 }
@@ -232,6 +266,7 @@ function injectInlineButton(targetImage) {
     const btn = document.createElement('button');
     btn.dataset.btnId = panelId;
     btn.innerText = '✨';
+    btn.title = `Translate Panel (${modKey} + T)`;
     btn.className = 'mangalens-inline-btn';
     btn.style.position = 'absolute';
     btn.style.zIndex = '2147483647';
@@ -241,6 +276,7 @@ function injectInlineButton(targetImage) {
     const refreshBtn = document.createElement('button');
     refreshBtn.dataset.refreshBtnId = panelId;
     refreshBtn.innerText = '🔄';
+    refreshBtn.title = `Reload Translation (${modKey} + R)`;
     refreshBtn.className = 'mangalens-inline-btn';
     refreshBtn.style.position = 'absolute';
     refreshBtn.style.zIndex = '2147483647';
@@ -271,13 +307,16 @@ function injectInlineButton(targetImage) {
         if (targetId) {
             const existingContainer = document.querySelector(`.mangalens-container[data-mangalens-id="${targetId}"]`);
             if (existingContainer) {
+                    btn.innerText = '👁️';
                 if (existingContainer.style.display === 'none') {
                     existingContainer.style.display = 'block';
-                    btn.innerText = '👁️';
+                    btn.style.opacity = '1';
+                    btn.title = `Hide Translations (${modKey} + H)`;
                     refreshBtn.style.display = showButtonsConfig ? 'block' : 'none';
                 } else {
                     existingContainer.style.display = 'none';
-                    btn.innerText = '✨';
+                    btn.style.opacity = '0.5';
+                    btn.title = `Unhide Translations (${modKey} + H)`;
                     refreshBtn.style.display = 'none';
                 }
                 return;
@@ -285,11 +324,13 @@ function injectInlineButton(targetImage) {
         }
 
         btn.innerText = '⏳';
+        btn.title = 'Translating...';
         refreshBtn.style.display = 'none';
         await injectTranslationUI(targetImage);
 
         if (btn.isConnected) {
             btn.innerText = '👁️';
+            btn.title = `Hide Translations (${modKey} + H)`;
             refreshBtn.style.display = showButtonsConfig ? 'block' : 'none';
         }
     });
@@ -350,6 +391,55 @@ function injectInlineButton(targetImage) {
 
 
 // Helpers
+function handleToggleShortcut() {
+    const containers = document.querySelectorAll('.mangalens-container');
+    if (containers.length === 0) return;
+
+    const isCurrentlyHidden = containers[0].style.display === 'none';
+    const newState = isCurrentlyHidden ? 'block' : 'none';
+
+    containers.forEach(c => { c.style.display = newState; });
+
+    document.querySelectorAll('.mangalens-inline-btn').forEach(btn => {
+        if (btn.innerText === '✨' || btn.innerText === '👁️') {
+            const panelId = btn.dataset.btnId;
+            const hasContainer = document.querySelector(`.mangalens-container[data-mangalens-id="${panelId}"]`);
+
+            if (hasContainer) {
+                btn.innerText = '👁️';
+                btn.style.opacity = newState === 'block' ? '1' : '0.5';
+                btn.title = `${newState === 'block' ? 'Hide' : 'Unhide'} Translations (${modKey} + H)`;
+                const refreshBtn = document.querySelector(`[data-refresh-btn-id="${panelId}"]`);
+                if (refreshBtn) {
+                    refreshBtn.style.display = (newState === 'block' && showButtonsConfig) ? 'block' : 'none';
+                }
+            }
+        }
+    });
+}
+
+function handleReloadShortcut(shortcutPayload) {
+    let targetImage = getCenterImage();
+    let isScreenshotMode = !targetImage;
+
+    if (isScreenshotMode) {
+        // Canvas type panel viewers reload: Wipe the screen and run a fresh screenshot
+        document.querySelectorAll('.mangalens-container, .mangalens-loader').forEach(el => el.remove());
+        injectTranslationUI(null, shortcutPayload);
+    } else {
+        // Standard reload: Wipe the specific panel's cache and re-run
+        const targetId = targetImage.dataset.mangalensId;
+        if (targetId) {
+            document.querySelectorAll(`.mangalens-container[data-mangalens-id="${targetId}"]`).forEach(el => el.remove());
+        }
+
+        const cacheKey = 'manga_cache_' + targetImage.src;
+        chrome.storage.local.remove(cacheKey, () => {
+            injectTranslationUI(targetImage);
+        });
+    }
+}
+
 function getCenterImage() {
     const images = Array.from(document.querySelectorAll('img')).filter(img =>
         img.clientWidth > 300 && img.clientHeight > 400

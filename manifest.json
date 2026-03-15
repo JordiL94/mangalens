@@ -10,11 +10,16 @@
   ],
   "commands": {
     "translate_current_panel": {
-      "suggested_key": {
-        "default": "Alt+T",
-        "mac": "MacCtrl+T"
-      },
+      "suggested_key": { "default": "Alt+T", "mac": "MacCtrl+T" },
       "description": "Translate the manga panel in the center of the screen"
+    },
+    "reload_translations": {
+      "suggested_key": { "default": "Alt+R", "mac": "MacCtrl+R" },
+      "description": "Reload the translation for the current panel"
+    },
+    "toggle_translations": {
+      "suggested_key": { "default": "Alt+H", "mac": "MacCtrl+H" },
+      "description": "Hide/Show all translations on the page"
     }
   },
   "host_permissions": [

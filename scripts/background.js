@@ -6,6 +6,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .catch(error => sendResponse({ success: false, error: error.message }));
 
         return true;
+    } else if (request.action === 'process_base64_screenshot') {
+        // If the content script hands us back a payload, process it directly!
+        handleImageTranslation(request.dataUrl)
+            .then(data => sendResponse({ success: true, data }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
     } else if (request.action === 'process_screenshot') {
         // Chrome's native API takes a Base64 snapshot of the current tab
         chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: 'jpeg', quality: 80 }, async (dataUrl) => {
@@ -21,13 +27,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-// Keyboard shortcut listener
+// Listen for the keyboard shortcuts
 chrome.commands.onCommand.addListener(async (command) => {
-    if (command === "translate_current_panel") {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab) {
-            chrome.tabs.sendMessage(tab.id, { action: "translate_page" });
-        }
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) return;
+
+    // 1. Translate OR Reload (Both might need a fresh screenshot for canvas type panel viewers)
+    if (command === "translate_current_panel" || command === "reload_translations") {
+        chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+            if (chrome.runtime.lastError) return;
+
+            chrome.tabs.sendMessage(tab.id, {
+                action: command === "translate_current_panel" ? "translate_page" : "reload_page",
+                shortcutScreenshot: dataUrl
+            });
+        });
+    }
+
+    // 2. Hide/Show (Doesn't need a screenshot, just a ping)
+    else if (command === "toggle_translations") {
+        chrome.tabs.sendMessage(tab.id, { action: "toggle_visibility" });
     }
 });
 
