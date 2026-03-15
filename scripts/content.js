@@ -1,26 +1,4 @@
-// SPA routing listener
-if (window.navigation) {
-    window.navigation.addEventListener('navigate', fullReset);
-}
-window.addEventListener('popstate', fullReset);
-
-// Completely wipe all UI and reset state for the new SPA page
-function fullReset() {
-    // 1. Destroy all containers, loaders, AND orphaned buttons
-    document.querySelectorAll('.mangalens-container, .mangalens-loader, .mangalens-inline-btn').forEach(el => el.remove());
-
-    // 2. Untag all images so they can be re-scanned
-    document.querySelectorAll('img').forEach(img => {
-        delete img.dataset.hasMangaLensBtn;
-    });
-
-    // 3. Give the SPA a fraction of a second to mount the new image, then add the correct button
-    setTimeout(() => {
-        document.querySelectorAll('img').forEach(processImage);
-    }, 100);
-}
-
-// Button positioned on panel visibility state
+// State & configuration
 let showButtonsConfig = true;
 
 chrome.storage.local.get(['showInlineBtns'], (result) => {
@@ -29,7 +7,13 @@ chrome.storage.local.get(['showInlineBtns'], (result) => {
     }
 });
 
-// 2. Update our message listener to handle the live toggle
+
+// Event listeners & observers
+if (window.navigation) {
+    window.navigation.addEventListener('navigate', fullReset);
+}
+window.addEventListener('popstate', fullReset);
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "translate_page") {
         injectTranslationUI();
@@ -38,10 +22,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         document.querySelectorAll('.mangalens-inline-btn').forEach(btn => {
             if (!showButtonsConfig) {
-                // If the user disabled buttons, hide them all
                 btn.style.display = 'none';
             } else {
-                // If enabled, only show the refresh button if the main button is an '👁️'
                 if (btn.innerText === '🔄') {
                     const mainBtn = btn.previousElementSibling;
                     btn.style.display = (mainBtn && mainBtn.innerText === '👁️') ? 'block' : 'none';
@@ -53,11 +35,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-// Mutation observer
+const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+        if (mutation.addedNodes.length) {
+            mutation.addedNodes.forEach(node => {
+                if (node.tagName === 'IMG') {
+                    processImage(node);
+                } else if (node.querySelectorAll) {
+                    node.querySelectorAll('img').forEach(processImage);
+                }
+            });
+        }
+    }
+});
+observer.observe(document.body, { childList: true, subtree: true });
+
+document.querySelectorAll('img').forEach(processImage);
+
+
+// Core logic
+function fullReset() {
+    document.querySelectorAll('.mangalens-container, .mangalens-loader, .mangalens-inline-btn').forEach(el => el.remove());
+    document.querySelectorAll('img').forEach(img => {
+        delete img.dataset.hasMangaLensBtn;
+    });
+
+    setTimeout(() => {
+        document.querySelectorAll('img').forEach(processImage);
+    }, 100);
+}
+
 function processImage(img) {
     if (img.dataset.hasMangaLensBtn) return;
 
-    // Safe thresholds to ensure only actual manga panels are targeted
     const MIN_WIDTH = 300;
     const MIN_HEIGHT = 400;
 
@@ -80,38 +90,147 @@ function processImage(img) {
     resizeObserver.observe(img);
 }
 
-document.querySelectorAll('img').forEach(processImage);
+async function injectTranslationUI(targetImage = null) {
+    let isScreenshotMode = false;
 
-const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-        if (mutation.addedNodes.length) {
-            mutation.addedNodes.forEach(node => {
-                if (node.tagName === 'IMG') {
-                    processImage(node);
-                } else if (node.querySelectorAll) {
-                    const images = node.querySelectorAll('img');
-                    images.forEach(processImage);
-                }
-            });
+    if (!targetImage) targetImage = getCenterImage();
+    if (!targetImage) isScreenshotMode = true;
+
+    if (!isScreenshotMode && !targetImage.dataset.mangalensId) {
+        targetImage.dataset.mangalensId = 'panel_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    let linkedMainBtn = null;
+    let linkedRefreshBtn = null;
+
+    if (!isScreenshotMode) {
+        const targetId = targetImage.dataset.mangalensId;
+        linkedMainBtn = document.querySelector(`[data-btn-id="${targetId}"]`);
+        linkedRefreshBtn = document.querySelector(`[data-refresh-btn-id="${targetId}"]`);
+
+        if (linkedMainBtn && linkedMainBtn.innerText !== '⏳') {
+            linkedMainBtn.innerText = '⏳';
+            if (linkedRefreshBtn) linkedRefreshBtn.style.display = 'none';
         }
     }
-});
-observer.observe(document.body, { childList: true, subtree: true });
+
+    // Teardown previous UI for the specific target
+    if (isScreenshotMode) {
+        document.querySelectorAll('.mangalens-container, .mangalens-loader').forEach(el => el.remove());
+    } else {
+        const targetId = targetImage.dataset.mangalensId;
+        document.querySelectorAll(`.mangalens-container[data-mangalens-id="${targetId}"], .mangalens-loader[data-mangalens-id="${targetId}"]`).forEach(el => el.remove());
+    }
+
+    injectStyles();
+
+    const loader = document.createElement('div');
+    loader.className = 'mangalens-loader';
+    loader.innerHTML = '<div class="spinner"></div><p>Scanning...</p>';
+
+    if (!isScreenshotMode) {
+        loader.dataset.mangalensId = targetImage.dataset.mangalensId;
+    }
+
+    if (isScreenshotMode) {
+        loader.style.position = 'fixed';
+        loader.style.top = '0';
+        loader.style.left = '0';
+        loader.style.width = '100vw';
+        loader.style.height = '100vh';
+        document.body.appendChild(loader);
+    } else {
+        document.body.appendChild(loader);
+        keepOverlaySynced(loader, targetImage);
+    }
+
+    try {
+        let response;
+
+        if (isScreenshotMode) {
+            response = await chrome.runtime.sendMessage({ action: 'process_screenshot' });
+        } else {
+            response = await chrome.runtime.sendMessage({ action: 'process_image_url', imageUrl: targetImage.src });
+        }
+
+        loader.remove();
+
+        if (!response || !response.success) {
+            alert("MangaLens Error: " + (response?.error || "Failed to communicate with Background worker."));
+            return;
+        }
+
+        const overlayContainer = document.createElement('div');
+        overlayContainer.className = 'mangalens-container';
+
+        if (!isScreenshotMode) {
+            overlayContainer.dataset.mangalensId = targetImage.dataset.mangalensId;
+        } else {
+            overlayContainer.style.position = 'fixed';
+            overlayContainer.style.top = '0';
+            overlayContainer.style.left = '0';
+            overlayContainer.style.width = '100vw';
+            overlayContainer.style.height = '100vh';
+        }
+
+        const translations = response.data;
+        translations.forEach(item => {
+            const [ymin, xmin, ymax, xmax] = item.box_2d;
+
+            const bubble = document.createElement('div');
+            bubble.className = 'mangalens-bubble';
+            bubble.innerText = item.translation;
+
+            const centerY = (ymin + ymax) / 20;
+            const centerX = (xmin + xmax) / 20;
+
+            bubble.style.top = `${centerY}%`;
+            bubble.style.left = `${centerX}%`;
+            bubble.style.transform = 'translate(-50%, -50%)';
+            bubble.style.width = `${(xmax - xmin) / 10}%`;
+            bubble.style.minHeight = `${(ymax - ymin) / 10}%`;
+
+            overlayContainer.appendChild(bubble);
+        });
+
+        document.body.appendChild(overlayContainer);
+
+        if (linkedMainBtn) linkedMainBtn.innerText = '👁️';
+        if (linkedRefreshBtn && showButtonsConfig) linkedRefreshBtn.style.display = 'block';
+
+        // Event cleanup
+        if (isScreenshotMode) {
+            const cleanup = () => {
+                document.querySelectorAll('.mangalens-container').forEach(el => el.remove());
+            };
+            window.addEventListener('scroll', cleanup, { once: true });
+            window.addEventListener('resize', cleanup, { once: true });
+        } else {
+            keepOverlaySynced(overlayContainer, targetImage);
+            const srcObserver = new MutationObserver(() => {
+                fullReset();
+                srcObserver.disconnect();
+            });
+            srcObserver.observe(targetImage, { attributes: true, attributeFilter: ['src'] });
+        }
+
+    } catch (error) {
+        if (loader) loader.remove();
+        if (linkedMainBtn) linkedMainBtn.innerText = '✨';
+        console.error("MangaLens runtime error:", error);
+    }
+}
 
 
-// ==========================================
-// 2. INLINE BUTTON LOGIC
-// ==========================================
+// UI Components
 function injectInlineButton(targetImage) {
-    // 1. Give the image an ID immediately if it doesn't have one
     if (!targetImage.dataset.mangalensId) {
         targetImage.dataset.mangalensId = 'panel_' + Math.random().toString(36).substr(2, 9);
     }
     const panelId = targetImage.dataset.mangalensId;
 
-    // --- 1. Main Toggle Button ---
     const btn = document.createElement('button');
-    btn.dataset.btnId = panelId; // <-- TAG THE BUTTON
+    btn.dataset.btnId = panelId;
     btn.innerText = '✨';
     btn.className = 'mangalens-inline-btn';
     btn.style.position = 'absolute';
@@ -119,21 +238,20 @@ function injectInlineButton(targetImage) {
     btn.style.setProperty('pointer-events', 'auto', 'important');
     btn.style.display = showButtonsConfig ? 'block' : 'none';
 
-    // --- 2. Refresh Button ---
     const refreshBtn = document.createElement('button');
-    refreshBtn.dataset.refreshBtnId = panelId; // <-- TAG THE REFRESH BUTTON
+    refreshBtn.dataset.refreshBtnId = panelId;
     refreshBtn.innerText = '🔄';
     refreshBtn.className = 'mangalens-inline-btn';
     refreshBtn.style.position = 'absolute';
     refreshBtn.style.zIndex = '2147483647';
     refreshBtn.style.setProperty('pointer-events', 'auto', 'important');
-    refreshBtn.style.display = 'none'; // Hidden until translations exist
+    refreshBtn.style.display = 'none';
 
     const container = targetImage.offsetParent || document.body;
     container.appendChild(btn);
     container.appendChild(refreshBtn);
 
-    // THE SHIELD
+    // Shield against parent listeners
     const stopHijack = (e) => e.stopPropagation();
 
     [btn, refreshBtn].forEach(el => {
@@ -143,7 +261,6 @@ function injectInlineButton(targetImage) {
         el.addEventListener('pointerup', stopHijack);
     });
 
-    // --- Main Button Logic ---
     btn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -177,22 +294,17 @@ function injectInlineButton(targetImage) {
         }
     });
 
-    // --- Refresh Button Logic ---
     refreshBtn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
 
-        // 1. Delete the current translations for this specific panel
         const targetId = targetImage.dataset.mangalensId;
         if (targetId) {
             document.querySelectorAll(`.mangalens-container[data-mangalens-id="${targetId}"]`).forEach(el => el.remove());
         }
 
-        // 2. Force clear the cache just for this specific image URL
         const cacheKey = 'manga_cache_' + targetImage.src;
         chrome.storage.local.remove(cacheKey, async () => {
-
-            // 3. Trigger a fresh generation
             btn.innerText = '⏳';
             refreshBtn.style.display = 'none';
 
@@ -205,7 +317,6 @@ function injectInlineButton(targetImage) {
         });
     });
 
-    // --- Position Sync Loop ---
     function syncBtn() {
         if (!targetImage.isConnected) {
             btn.remove();
@@ -225,11 +336,9 @@ function injectInlineButton(targetImage) {
             newLeft = `${(imgRect.left - containerRect.left) + container.scrollLeft + 16}px`;
         }
 
-        // Lock main button
         if (btn.style.top !== newTop) btn.style.top = newTop;
         if (btn.style.left !== newLeft) btn.style.left = newLeft;
 
-        // Lock refresh button exactly 48px to the right
         if (refreshBtn.style.top !== newTop) refreshBtn.style.top = newTop;
         const refreshLeft = `${parseFloat(newLeft) + 48}px`;
         if (refreshBtn.style.left !== refreshLeft) refreshBtn.style.left = refreshLeft;
@@ -239,9 +348,9 @@ function injectInlineButton(targetImage) {
     requestAnimationFrame(syncBtn);
 }
 
-// Helper to find the image closest to the vertical center of the viewport
+
+// Helpers
 function getCenterImage() {
-    // Only look at images that meet manga panel size thresholds
     const images = Array.from(document.querySelectorAll('img')).filter(img =>
         img.clientWidth > 300 && img.clientHeight > 400
     );
@@ -266,154 +375,9 @@ function getCenterImage() {
     return closestImage;
 }
 
-// ==========================================
-// 3. FULL TRANSLATION PIPELINE
-// ==========================================
-async function injectTranslationUI(targetImage = null) {
-    let isScreenshotMode = false;
-
-    if (!targetImage) targetImage = getCenterImage();
-    if (!targetImage) isScreenshotMode = true;
-
-    if (!isScreenshotMode && !targetImage.dataset.mangalensId) {
-        targetImage.dataset.mangalensId = 'panel_' + Math.random().toString(36).substr(2, 9);
-    }
-
-    // --- NEW: Grab the linked buttons and set to loading ---
-    let linkedMainBtn = null;
-    let linkedRefreshBtn = null;
-
-    if (!isScreenshotMode) {
-        const targetId = targetImage.dataset.mangalensId;
-        linkedMainBtn = document.querySelector(`[data-btn-id="${targetId}"]`);
-        linkedRefreshBtn = document.querySelector(`[data-refresh-btn-id="${targetId}"]`);
-
-        // If triggered by shortcut, force the loading UI
-        if (linkedMainBtn && linkedMainBtn.innerText !== '⏳') {
-            linkedMainBtn.innerText = '⏳';
-            if (linkedRefreshBtn) linkedRefreshBtn.style.display = 'none';
-        }
-    }
-
-    // Targeted Teardown
-    if (isScreenshotMode) {
-        document.querySelectorAll('.mangalens-container, .mangalens-loader').forEach(el => el.remove());
-    } else {
-        const targetId = targetImage.dataset.mangalensId;
-        document.querySelectorAll(`.mangalens-container[data-mangalens-id="${targetId}"]`).forEach(el => el.remove());
-        document.querySelectorAll(`.mangalens-loader[data-mangalens-id="${targetId}"]`).forEach(el => el.remove());
-    }
-
-    injectStyles();
-
-    const loader = document.createElement('div');
-    loader.className = 'mangalens-loader';
-    loader.innerHTML = '<div class="spinner"></div><p>Gemini is scanning...</p>';
-
-    // Tag the loader with the matching ID
-    if (!isScreenshotMode) {
-        loader.dataset.mangalensId = targetImage.dataset.mangalensId;
-    }
-
-    if (isScreenshotMode) {
-        loader.style.position = 'fixed';
-        loader.style.top = '0';
-        loader.style.left = '0';
-        loader.style.width = '100vw';
-        loader.style.height = '100vh';
-        document.body.appendChild(loader);
-    } else {
-        document.body.appendChild(loader);
-        keepOverlaySynced(loader, targetImage);
-    }
-
-    try {
-        let response;
-
-        // 3. Route the request based on the mode
-        if (isScreenshotMode) {
-            response = await chrome.runtime.sendMessage({ action: 'process_screenshot' });
-        } else {
-            response = await chrome.runtime.sendMessage({ action: 'process_image_url', imageUrl: targetImage.src });
-        }
-
-        loader.remove();
-
-        if (!response || !response.success) {
-            alert("MangaLens Error: " + (response?.error || "Failed to communicate with Background worker."));
-            return;
-        }
-
-        const overlayContainer = document.createElement('div');
-        overlayContainer.className = 'mangalens-container';
-
-        if (!isScreenshotMode) {
-            overlayContainer.dataset.mangalensId = targetImage.dataset.mangalensId;
-        }
-
-        // Lock the container to the entire viewport for screenshots
-        if (isScreenshotMode) {
-            overlayContainer.style.position = 'fixed';
-            overlayContainer.style.top = '0';
-            overlayContainer.style.left = '0';
-            overlayContainer.style.width = '100vw';
-            overlayContainer.style.height = '100vh';
-        }
-
-        const translations = response.data;
-        translations.forEach(item => {
-            const [ymin, xmin, ymax, xmax] = item.box_2d;
-
-            const bubble = document.createElement('div');
-            bubble.className = 'mangalens-bubble';
-            bubble.innerText = item.translation;
-
-            const centerY = (ymin + ymax) / 20;
-            const centerX = (xmin + xmax) / 20;
-
-            bubble.style.top = `${centerY}%`;
-            bubble.style.left = `${centerX}%`;
-            bubble.style.transform = 'translate(-50%, -50%)';
-            bubble.style.width = `${(xmax - xmin) / 10}%`;
-            bubble.style.minHeight = `${(ymax - ymin) / 10}%`;
-
-            overlayContainer.appendChild(bubble);
-        });
-
-        document.body.appendChild(overlayContainer);
-
-        // --- NEW: Update button states on success ---
-        if (linkedMainBtn) linkedMainBtn.innerText = '👁️';
-        if (linkedRefreshBtn && showButtonsConfig) linkedRefreshBtn.style.display = 'block';
-
-        // 4. Handle Cleanup
-        if (isScreenshotMode) {
-            const cleanup = () => removeExistingOverlays();
-            window.addEventListener('scroll', cleanup, { once: true });
-            window.addEventListener('resize', cleanup, { once: true });
-        } else {
-            keepOverlaySynced(overlayContainer, targetImage);
-            const srcObserver = new MutationObserver(() => {
-                fullReset();
-                srcObserver.disconnect();
-            });
-            srcObserver.observe(targetImage, { attributes: true, attributeFilter: ['src'] });
-        }
-
-    } catch (error) {
-        if (loader) loader.remove();
-        if (linkedMainBtn) linkedMainBtn.innerText = '✨'; // <-- NEW: Reset if failed
-        console.error("MangaLens runtime error:", error);
-        alert("An unexpected error occurred. Check the console.");
-    }
-}
-
-
-// Helpers
 function keepOverlaySynced(overlayElement, targetImage) {
     overlayElement.style.position = 'absolute';
 
-    // Move the overlay from the body into the scrolling container
     const container = targetImage.offsetParent || document.body;
     if (overlayElement.parentElement !== container) {
         container.appendChild(overlayElement);
@@ -448,6 +412,7 @@ function keepOverlaySynced(overlayElement, targetImage) {
 }
 
 
+// Styles
 function injectStyles() {
     if (document.getElementById('mangalens-styles')) return;
 
