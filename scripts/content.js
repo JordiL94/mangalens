@@ -463,7 +463,7 @@ function injectStyles() {
       background: rgba(15, 17, 21, 0.85);
       backdrop-filter: blur(4px);
       color: #fff;
-      padding: 8px 12px;
+      padding: 8px 2px; 
       border-radius: 8px;
       font-family: -apple-system, sans-serif;
       font-size: 14px;
@@ -478,11 +478,10 @@ function injectStyles() {
       pointer-events: auto;
       transition: opacity 0.2s ease;
       box-sizing: border-box;
-      min-width: 80px;
-      height: auto;
-      word-wrap: break-word;
-      overflow-wrap: break-word;
-      hyphens: auto;
+      height: auto; 
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      hyphens: auto; 
     }
     .mangalens-bubble:hover {
       opacity: 0;
