@@ -37,6 +37,46 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         document.querySelectorAll('.mangalens-btn-group').forEach(group => {
             group.style.display = showButtonsConfig ? 'flex' : 'none';
         });
+    } else if (request.action === "clear_page_cache" || request.action === "reset_ui") {
+        // 1. INSTANT UI WIPE: Destroy active bubbles and loaders
+        document.querySelectorAll('.mangalens-container, .mangalens-loader').forEach(el => el.remove());
+
+        // 2. RESET BUTTONS: Put the Ghost Pills back to their default state
+        document.querySelectorAll('.mangalens-btn-group').forEach(group => {
+            const mainBtn = group.querySelector('[data-btn-id]');
+            const refreshBtn = group.querySelector('[data-refresh-btn-id]');
+
+            if (mainBtn) {
+                mainBtn.innerText = '✨';
+                mainBtn.style.opacity = '1';
+                mainBtn.title = `Translate Panel (${modKey} + T)`;
+            }
+            if (refreshBtn) {
+                refreshBtn.style.display = 'none';
+            }
+        });
+
+        // If we only wanted a UI reset (because popup.js handled the global storage wipe), stop here!
+        if (request.action === "reset_ui") {
+            return;
+        }
+
+        // 3. STORAGE WIPE (Only runs for clear_page_cache): Find every image on the screen
+        const keysToRemove = [];
+        document.querySelectorAll('img').forEach(img => {
+            if (img.src) keysToRemove.push('manga_cache_' + img.src);
+        });
+
+        // 4. Execute the database wipe for the current page
+        if (keysToRemove.length > 0) {
+            chrome.storage.local.remove(keysToRemove, () => {
+                sendResponse({ cleared: keysToRemove.length });
+            });
+        } else {
+            sendResponse({ cleared: 0 });
+        }
+
+        return true;
     }
 });
 

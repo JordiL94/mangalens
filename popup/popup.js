@@ -6,10 +6,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const defaultStudyModeToggle = document.getElementById('defaultStudyModeToggle'); // <-- NEW
     const saveBtn = document.getElementById('saveBtn');
     const translateBtn = document.getElementById('translateBtn');
-    const clearCacheBtn = document.getElementById('clearCacheBtn');
     const modelBadge = document.getElementById('modelBadge');
     const tabBtns = document.querySelectorAll('.tab-btn');
     const views = document.querySelectorAll('.view');
+
+    // --- CACHE MANAGEMENT LOGIC ---
+    const initClearBtn = document.getElementById('initClearBtn');
+    const cacheWarning = document.getElementById('cacheWarning');
+    const wipePageBtn = document.getElementById('wipePageBtn');
+    const wipeAllBtn = document.getElementById('wipeAllBtn');
+    const cancelWipeBtn = document.getElementById('cancelWipeBtn');
+    const currentDomainName = document.getElementById('currentDomainName');
+
+    let activeHostname = '';
 
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -97,7 +106,73 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    clearCacheBtn.addEventListener('click', () => {
-        console.log("Clear cache clicked!");
+    // 1. Show the warning
+    initClearBtn.addEventListener('click', () => {
+        initClearBtn.style.display = 'none';
+        cacheWarning.style.display = 'block';
+    });
+
+    // 2. Hide the warning
+    cancelWipeBtn.addEventListener('click', () => {
+        cacheWarning.style.display = 'none';
+        initClearBtn.style.display = 'flex';
+    });
+
+// 3. Page Wipe (The Scalpel)
+    wipePageBtn.addEventListener('click', async () => {
+        const originalText = wipePageBtn.textContent;
+        wipePageBtn.textContent = 'Clearing...';
+
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) {
+            // Ask the content script to find and delete the exact images on screen
+            chrome.tabs.sendMessage(tab.id, { action: "clear_page_cache" }, (response) => {
+                if (chrome.runtime.lastError || !response || response.cleared === 0) {
+                    wipePageBtn.textContent = 'Nothing to clear here!';
+                } else {
+                    wipePageBtn.textContent = `Cleared ${response.cleared} panels!`;
+                }
+
+                setTimeout(() => {
+                    cancelWipeBtn.click();
+                    wipePageBtn.textContent = originalText;
+                }, 2000);
+            });
+        }
+    });
+
+    // 4. Global Wipe (All Sites)
+    wipeAllBtn.addEventListener('click', () => {
+        wipeAllBtn.textContent = 'Clearing all...';
+
+        chrome.storage.local.get(null, (items) => {
+            const keysToRemove = [];
+            for (const key in items) {
+                if (key.startsWith('manga_cache_')) {
+                    keysToRemove.push(key);
+                }
+            }
+
+            if (keysToRemove.length > 0) {
+                chrome.storage.local.remove(keysToRemove, () => {
+                    wipeAllBtn.textContent = 'All caches cleared.';
+
+                    // Tell the active tab to instantly wipe its UI
+                    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                        if (tabs[0]) {
+                            chrome.tabs.sendMessage(tabs[0].id, { action: "reset_ui" });
+                        }
+                    });
+
+                    setTimeout(() => {
+                        cancelWipeBtn.click();
+                        wipeAllBtn.textContent = 'Clear All Sites'; // Reset to formal text
+                    }, 2000);
+                });
+            } else {
+                wipeAllBtn.textContent = 'Cache is already empty.';
+                setTimeout(() => wipeAllBtn.textContent = 'Clear All Sites', 2000);
+            }
+        });
     });
 });
