@@ -307,14 +307,16 @@ function injectInlineButton(targetImage) {
         if (targetId) {
             const existingContainer = document.querySelector(`.mangalens-container[data-mangalens-id="${targetId}"]`);
             if (existingContainer) {
-                    btn.innerText = '👁️';
-                if (existingContainer.style.display === 'none') {
-                    existingContainer.style.display = 'block';
+                btn.innerText = '👁️';
+
+                // Toggle Study Mode via CSS Class
+                if (existingContainer.classList.contains('mangalens-study-mode')) {
+                    existingContainer.classList.remove('mangalens-study-mode');
                     btn.style.opacity = '1';
                     btn.title = `Hide Translations (${modKey} + H)`;
                     refreshBtn.style.display = showButtonsConfig ? 'block' : 'none';
                 } else {
-                    existingContainer.style.display = 'none';
+                    existingContainer.classList.add('mangalens-study-mode');
                     btn.style.opacity = '0.5';
                     btn.title = `Unhide Translations (${modKey} + H)`;
                     refreshBtn.style.display = 'none';
@@ -395,11 +397,19 @@ function handleToggleShortcut() {
     const containers = document.querySelectorAll('.mangalens-container');
     if (containers.length === 0) return;
 
-    const isCurrentlyHidden = containers[0].style.display === 'none';
-    const newState = isCurrentlyHidden ? 'block' : 'none';
+    // Check if the first container has the study mode class
+    const isCurrentlyHidden = containers[0].classList.contains('mangalens-study-mode');
 
-    containers.forEach(c => { c.style.display = newState; });
+    // Toggle the class on all containers instead of using display: none
+    containers.forEach(c => {
+        if (isCurrentlyHidden) {
+            c.classList.remove('mangalens-study-mode');
+        } else {
+            c.classList.add('mangalens-study-mode');
+        }
+    });
 
+    // Sync the physical buttons to match the new state
     document.querySelectorAll('.mangalens-inline-btn').forEach(btn => {
         if (btn.innerText === '✨' || btn.innerText === '👁️') {
             const panelId = btn.dataset.btnId;
@@ -407,11 +417,13 @@ function handleToggleShortcut() {
 
             if (hasContainer) {
                 btn.innerText = '👁️';
-                btn.style.opacity = newState === 'block' ? '1' : '0.5';
-                btn.title = `${newState === 'block' ? 'Hide' : 'Unhide'} Translations (${modKey} + H)`;
+                // If we WERE hidden, we are now visible (opacity 1).
+                btn.style.opacity = isCurrentlyHidden ? '1' : '0.5';
+                btn.title = `${isCurrentlyHidden ? 'Hide' : 'Unhide'} Translations (${modKey} + H)`;
+
                 const refreshBtn = document.querySelector(`[data-refresh-btn-id="${panelId}"]`);
                 if (refreshBtn) {
-                    refreshBtn.style.display = (newState === 'block' && showButtonsConfig) ? 'block' : 'none';
+                    refreshBtn.style.display = (isCurrentlyHidden && showButtonsConfig) ? 'block' : 'none';
                 }
             }
         }
@@ -540,6 +552,14 @@ function injectStyles() {
     }
     .mangalens-bubble:hover {
       opacity: 0;
+    }
+    /* 1. Make the bubbles invisible but keep their physical hitboxes */
+    .mangalens-study-mode .mangalens-bubble {
+      opacity: 0; 
+    }
+    /* 2. When hovering the invisible hitbox, reveal the English */
+    .mangalens-study-mode .mangalens-bubble:hover {
+      opacity: 1;
     }
     .mangalens-loader {
       background: rgba(0,0,0,0.6);
