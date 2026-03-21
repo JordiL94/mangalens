@@ -1,16 +1,19 @@
 // State & configuration
 let showButtonsConfig = true;
+let defaultStudyModeConfig = false;
 
 // Detect OS to show the correct keyboard shortcut in tooltips
 const isMac = navigator.userAgent.includes('Mac');
 const modKey = isMac ? 'Ctrl' : 'Alt';
 
-chrome.storage.local.get(['showInlineBtns'], (result) => {
+chrome.storage.local.get(['showInlineBtns', 'defaultStudyMode'], (result) => {
     if (result.showInlineBtns !== undefined) {
         showButtonsConfig = result.showInlineBtns;
     }
+    if (result.defaultStudyMode !== undefined) {
+        defaultStudyModeConfig = result.defaultStudyMode; // <-- LOAD STATE
+    }
 });
-
 
 // Event listeners & observers
 if (window.navigation) {
@@ -25,20 +28,55 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         handleReloadShortcut(request.shortcutScreenshot);
     } else if (request.action === "toggle_visibility") {
         handleToggleShortcut();
-    } else if (request.action === "toggle_buttons") {
-        showButtonsConfig = request.show;
-        document.querySelectorAll('.mangalens-inline-btn').forEach(btn => {
-            if (!showButtonsConfig) {
-                btn.style.display = 'none';
-            } else {
-                if (btn.innerText === '🔄') {
-                    const mainBtn = btn.previousElementSibling;
-                    btn.style.display = (mainBtn && mainBtn.innerText === '👁️') ? 'block' : 'none';
-                } else {
-                    btn.style.display = 'block';
-                }
+    } else if (request.action === "update_settings") {
+        // LIVE UPDATE BOTH VARIABLES!
+        showButtonsConfig = request.showBtns;
+        defaultStudyModeConfig = request.studyMode;
+
+        // Sync the physical Ghost Pills visibility
+        document.querySelectorAll('.mangalens-btn-group').forEach(group => {
+            group.style.display = showButtonsConfig ? 'flex' : 'none';
+        });
+    } else if (request.action === "clear_page_cache" || request.action === "reset_ui") {
+        // 1. INSTANT UI WIPE: Destroy active bubbles and loaders
+        document.querySelectorAll('.mangalens-container, .mangalens-loader').forEach(el => el.remove());
+
+        // 2. RESET BUTTONS: Put the Ghost Pills back to their default state
+        document.querySelectorAll('.mangalens-btn-group').forEach(group => {
+            const mainBtn = group.querySelector('[data-btn-id]');
+            const refreshBtn = group.querySelector('[data-refresh-btn-id]');
+
+            if (mainBtn) {
+                mainBtn.innerText = '✨';
+                mainBtn.style.opacity = '1';
+                mainBtn.title = `Translate Panel (${modKey} + T)`;
+            }
+            if (refreshBtn) {
+                refreshBtn.style.display = 'none';
             }
         });
+
+        // If we only wanted a UI reset (because popup.js handled the global storage wipe), stop here!
+        if (request.action === "reset_ui") {
+            return;
+        }
+
+        // 3. STORAGE WIPE (Only runs for clear_page_cache): Find every image on the screen
+        const keysToRemove = [];
+        document.querySelectorAll('img').forEach(img => {
+            if (img.src) keysToRemove.push('manga_cache_' + img.src);
+        });
+
+        // 4. Execute the database wipe for the current page
+        if (keysToRemove.length > 0) {
+            chrome.storage.local.remove(keysToRemove, () => {
+                sendResponse({ cleared: keysToRemove.length });
+            });
+        } else {
+            sendResponse({ cleared: 0 });
+        }
+
+        return true;
     }
 });
 
@@ -130,8 +168,6 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
         document.querySelectorAll(`.mangalens-container[data-mangalens-id="${targetId}"], .mangalens-loader[data-mangalens-id="${targetId}"]`).forEach(el => el.remove());
     }
 
-    injectStyles();
-
     const loader = document.createElement('div');
     loader.className = 'mangalens-loader';
     loader.innerHTML = '<div class="spinner"></div><p>Scanning...</p>';
@@ -178,6 +214,10 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
         const overlayContainer = document.createElement('div');
         overlayContainer.className = 'mangalens-container';
 
+        if (defaultStudyModeConfig) {
+            overlayContainer.classList.add('mangalens-study-mode');
+        }
+
         if (!isScreenshotMode) {
             overlayContainer.dataset.mangalensId = targetImage.dataset.mangalensId;
         } else {
@@ -202,8 +242,17 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
             bubble.style.top = `${centerY}%`;
             bubble.style.left = `${centerX}%`;
             bubble.style.transform = 'translate(-50%, -50%)';
-            bubble.style.width = `${(xmax - xmin) / 10}%`;
             bubble.style.minHeight = `${(ymax - ymin) / 10}%`;
+
+            // THE SMART LAYOUT ROUTER
+            if (item.type === 'dialogue') {
+                // Dialogue gets a comfortable horizontal reading shape
+                bubble.style.minWidth = '140px';
+                bubble.style.maxWidth = '240px';
+            } else {
+                // SFX and background signs get locked to their strict, narrow bounding box
+                bubble.style.width = `${(xmax - xmin) / 10}%`;
+            }
 
             overlayContainer.appendChild(bubble);
         });
@@ -212,9 +261,11 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
 
         if (linkedMainBtn) {
             linkedMainBtn.innerText = '👁️';
-            linkedMainBtn.title = `Hide Translations (${modKey} + H)`;
+            linkedMainBtn.style.opacity = defaultStudyModeConfig ? '0.5' : '1';
+            linkedMainBtn.title = `${defaultStudyModeConfig ? 'Unhide' : 'Hide'} Translations (${modKey} + H)`;
         }
-        if (linkedRefreshBtn && showButtonsConfig) linkedRefreshBtn.style.display = 'block';
+        if (linkedRefreshBtn && showButtonsConfig)
+            linkedRefreshBtn.style.display = (!defaultStudyModeConfig && showButtonsConfig) ? 'block' : 'none';
 
         // Event cleanup
         if (isScreenshotMode) {
@@ -263,34 +314,39 @@ function injectInlineButton(targetImage) {
     }
     const panelId = targetImage.dataset.mangalensId;
 
+    // --- NEW: THE PILL CONTAINER ---
+    const btnGroup = document.createElement('div');
+    btnGroup.className = 'mangalens-btn-group';
+    btnGroup.dataset.groupId = panelId;
+    btnGroup.style.display = showButtonsConfig ? 'flex' : 'none';
+
+    // --- 1. Main Toggle Button (No longer absolute) ---
     const btn = document.createElement('button');
     btn.dataset.btnId = panelId;
     btn.innerText = '✨';
     btn.title = `Translate Panel (${modKey} + T)`;
     btn.className = 'mangalens-inline-btn';
-    btn.style.position = 'absolute';
-    btn.style.zIndex = '2147483647';
     btn.style.setProperty('pointer-events', 'auto', 'important');
-    btn.style.display = showButtonsConfig ? 'block' : 'none';
 
+    // --- 2. Refresh Button (No longer absolute) ---
     const refreshBtn = document.createElement('button');
     refreshBtn.dataset.refreshBtnId = panelId;
     refreshBtn.innerText = '🔄';
     refreshBtn.title = `Reload Translation (${modKey} + R)`;
     refreshBtn.className = 'mangalens-inline-btn';
-    refreshBtn.style.position = 'absolute';
-    refreshBtn.style.zIndex = '2147483647';
     refreshBtn.style.setProperty('pointer-events', 'auto', 'important');
-    refreshBtn.style.display = 'none';
+    refreshBtn.style.display = 'none'; // Hidden initially
+
+    // Put buttons in the pill, put the pill in the DOM
+    btnGroup.appendChild(btn);
+    btnGroup.appendChild(refreshBtn);
 
     const container = targetImage.offsetParent || document.body;
-    container.appendChild(btn);
-    container.appendChild(refreshBtn);
+    container.appendChild(btnGroup);
 
-    // Shield against parent listeners
+    // The Shield now protects the whole group
     const stopHijack = (e) => e.stopPropagation();
-
-    [btn, refreshBtn].forEach(el => {
+    [btnGroup].forEach(el => {
         el.addEventListener('mousedown', stopHijack);
         el.addEventListener('mouseup', stopHijack);
         el.addEventListener('pointerdown', stopHijack);
@@ -307,14 +363,16 @@ function injectInlineButton(targetImage) {
         if (targetId) {
             const existingContainer = document.querySelector(`.mangalens-container[data-mangalens-id="${targetId}"]`);
             if (existingContainer) {
-                    btn.innerText = '👁️';
-                if (existingContainer.style.display === 'none') {
-                    existingContainer.style.display = 'block';
+                btn.innerText = '👁️';
+
+                // Toggle Study Mode via CSS Class
+                if (existingContainer.classList.contains('mangalens-study-mode')) {
+                    existingContainer.classList.remove('mangalens-study-mode');
                     btn.style.opacity = '1';
                     btn.title = `Hide Translations (${modKey} + H)`;
                     refreshBtn.style.display = showButtonsConfig ? 'block' : 'none';
                 } else {
-                    existingContainer.style.display = 'none';
+                    existingContainer.classList.add('mangalens-study-mode');
                     btn.style.opacity = '0.5';
                     btn.title = `Unhide Translations (${modKey} + H)`;
                     refreshBtn.style.display = 'none';
@@ -360,8 +418,7 @@ function injectInlineButton(targetImage) {
 
     function syncBtn() {
         if (!targetImage.isConnected) {
-            btn.remove();
-            refreshBtn.remove();
+            btnGroup.remove(); // Remove the group!
             return;
         }
 
@@ -377,12 +434,9 @@ function injectInlineButton(targetImage) {
             newLeft = `${(imgRect.left - containerRect.left) + container.scrollLeft + 16}px`;
         }
 
-        if (btn.style.top !== newTop) btn.style.top = newTop;
-        if (btn.style.left !== newLeft) btn.style.left = newLeft;
-
-        if (refreshBtn.style.top !== newTop) refreshBtn.style.top = newTop;
-        const refreshLeft = `${parseFloat(newLeft) + 48}px`;
-        if (refreshBtn.style.left !== refreshLeft) refreshBtn.style.left = refreshLeft;
+        // Just move the pill, flexbox handles the rest!
+        if (btnGroup.style.top !== newTop) btnGroup.style.top = newTop;
+        if (btnGroup.style.left !== newLeft) btnGroup.style.left = newLeft;
 
         requestAnimationFrame(syncBtn);
     }
@@ -395,11 +449,19 @@ function handleToggleShortcut() {
     const containers = document.querySelectorAll('.mangalens-container');
     if (containers.length === 0) return;
 
-    const isCurrentlyHidden = containers[0].style.display === 'none';
-    const newState = isCurrentlyHidden ? 'block' : 'none';
+    // Check if the first container has the study mode class
+    const isCurrentlyHidden = containers[0].classList.contains('mangalens-study-mode');
 
-    containers.forEach(c => { c.style.display = newState; });
+    // Toggle the class on all containers instead of using display: none
+    containers.forEach(c => {
+        if (isCurrentlyHidden) {
+            c.classList.remove('mangalens-study-mode');
+        } else {
+            c.classList.add('mangalens-study-mode');
+        }
+    });
 
+    // Sync the physical buttons to match the new state
     document.querySelectorAll('.mangalens-inline-btn').forEach(btn => {
         if (btn.innerText === '✨' || btn.innerText === '👁️') {
             const panelId = btn.dataset.btnId;
@@ -407,11 +469,13 @@ function handleToggleShortcut() {
 
             if (hasContainer) {
                 btn.innerText = '👁️';
-                btn.style.opacity = newState === 'block' ? '1' : '0.5';
-                btn.title = `${newState === 'block' ? 'Hide' : 'Unhide'} Translations (${modKey} + H)`;
+                // If we WERE hidden, we are now visible (opacity 1).
+                btn.style.opacity = isCurrentlyHidden ? '1' : '0.5';
+                btn.title = `${isCurrentlyHidden ? 'Hide' : 'Unhide'} Translations (${modKey} + H)`;
+
                 const refreshBtn = document.querySelector(`[data-refresh-btn-id="${panelId}"]`);
                 if (refreshBtn) {
-                    refreshBtn.style.display = (newState === 'block' && showButtonsConfig) ? 'block' : 'none';
+                    refreshBtn.style.display = (isCurrentlyHidden && showButtonsConfig) ? 'block' : 'none';
                 }
             }
         }
@@ -503,7 +567,7 @@ function keepOverlaySynced(overlayElement, targetImage) {
 
 
 // Styles
-function injectStyles() {
+(function() {
     if (document.getElementById('mangalens-styles')) return;
 
     const style = document.createElement('style');
@@ -541,6 +605,14 @@ function injectStyles() {
     .mangalens-bubble:hover {
       opacity: 0;
     }
+    /* 1. Make the bubbles invisible but keep their physical hitboxes */
+    .mangalens-study-mode .mangalens-bubble {
+      opacity: 0; 
+    }
+    /* 2. When hovering the invisible hitbox, reveal the English */
+    .mangalens-study-mode .mangalens-bubble:hover {
+      opacity: 1;
+    }
     .mangalens-loader {
       background: rgba(0,0,0,0.6);
       backdrop-filter: blur(2px);
@@ -565,22 +637,39 @@ function injectStyles() {
     @keyframes spin { 
       to { transform: rotate(360deg); } 
     }
-    .mangalens-inline-btn {
-      z-index: 10000;
-      background: rgba(15, 17, 21, 0.7);
-      backdrop-filter: blur(4px);
-      border: 1px solid rgba(139, 92, 246, 0.5);
-      border-radius: 8px;
-      padding: 8px 12px;
-      cursor: pointer;
-      font-size: 16px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    .mangalens-btn-group {
+      position: absolute;
+      z-index: 2147483647;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      background: rgba(15, 17, 21, 0.3);
+      backdrop-filter: blur(2px);
+      border-radius: 20px; 
+      padding: 4px;
       transition: all 0.2s ease;
+      opacity: 0.4; 
     }
-    .mangalens-inline-btn:hover {
-      background: rgba(139, 92, 246, 0.8);
-      transform: scale(1.05);
+    .mangalens-btn-group:hover {
+      opacity: 1; 
+      background: rgba(15, 17, 21, 0.85); 
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .mangalens-btn-group .mangalens-inline-btn {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      padding: 4px 8px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 16px;
+      transition: background 0.2s;
+      color: white;
+    }
+    .mangalens-btn-group .mangalens-inline-btn:hover {
+      background: rgba(255, 255, 255, 0.1); /* Subtle highlight on hover */
+      transform: none; 
     }
   `;
     document.head.appendChild(style);
-}
+})();
