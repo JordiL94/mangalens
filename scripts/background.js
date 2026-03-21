@@ -1,106 +1,89 @@
-// Listen for messages from content script
+// --- HELPER FUNCTIONS ---
+async function handleAsyncMessage(promise, sendResponse) {
+    try {
+        const data = await promise;
+        sendResponse({ success: true, data });
+    } catch (error) {
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+// Service Workers lack FileReader, so we convert Blobs manually via ArrayBuffer
+async function blobToBase64(blob) {
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 8192;
+
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+}
+
+// --- MESSAGE LISTENERS ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'process_image_url') {
-        handleTranslationRequestWithCache(request.imageUrl)
-            .then(data => sendResponse({ success: true, data }))
-            .catch(error => sendResponse({ success: false, error: error.message }));
+        handleAsyncMessage(processWithCache(request.imageUrl), sendResponse);
+        return true;
+    }
 
+    if (request.action === 'process_base64_screenshot') {
+        handleAsyncMessage(translateImage(request.dataUrl), sendResponse);
         return true;
-    } else if (request.action === 'process_base64_screenshot') {
-        // If the content script hands us back a payload, process it directly!
-        handleImageTranslation(request.dataUrl)
-            .then(data => sendResponse({ success: true, data }))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true;
-    } else if (request.action === 'process_screenshot') {
-        // Chrome's native API takes a Base64 snapshot of the current tab
-        chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: 'jpeg', quality: 80 }, async (dataUrl) => {
-            try {
-                // Bypass the cache and feed the screenshot directly into Gemini function
-                const data = await handleImageTranslation(dataUrl);
-                sendResponse({ success: true, data });
-            } catch (error) {
-                sendResponse({ success: false, error: error.message });
+    }
+
+    if (request.action === 'process_screenshot') {
+        chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+            if (chrome.runtime.lastError) {
+                return sendResponse({ success: false, error: chrome.runtime.lastError.message });
             }
+            handleAsyncMessage(translateImage(dataUrl), sendResponse);
         });
         return true;
     }
 });
 
-// Listen for the keyboard shortcuts
+// --- COMMAND LISTENERS ---
 chrome.commands.onCommand.addListener(async (command) => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) return;
 
-    // 1. Translate OR Reload (Both might need a fresh screenshot for canvas type panel viewers)
     if (command === "translate_current_panel" || command === "reload_translations") {
         chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
             if (chrome.runtime.lastError) return;
-
             chrome.tabs.sendMessage(tab.id, {
                 action: command === "translate_current_panel" ? "translate_page" : "reload_page",
                 shortcutScreenshot: dataUrl
             });
         });
-    }
-
-    // 2. Hide/Show (Doesn't need a screenshot, just a ping)
-    else if (command === "toggle_translations") {
+    } else if (command === "toggle_translations") {
         chrome.tabs.sendMessage(tab.id, { action: "toggle_visibility" });
     }
 });
 
-async function handleTranslationRequestWithCache(imageUrl) {
+// --- CORE TRANSLATION PIPELINE ---
+async function processWithCache(imageUrl) {
     const cacheKey = `manga_cache_${imageUrl}`;
-
-    // 1. Check Chrome's local storage for this specific image URL
     const cachedData = await chrome.storage.local.get([cacheKey]);
 
-    if (cachedData[cacheKey]) {
-        console.log("MangaLens: Serving from cache!");
-        return cachedData[cacheKey]; // Instant return, no API call
-    }
+    if (cachedData[cacheKey]) return cachedData[cacheKey];
 
-    // 2. If not cached, proceed with the normal fetch and Gemini processing
-    console.log("MangaLens: No cache found, fetching from Gemini...");
-    const freshData = await fetchAndProcessImage(imageUrl);
+    const imageResponse = await fetch(imageUrl);
+    const blob = await imageResponse.blob();
+    const base64Image = await blobToBase64(blob);
 
-    // 3. Save the result to cache for next time
+    const freshData = await translateImage(base64Image);
     await chrome.storage.local.set({ [cacheKey]: freshData });
 
     return freshData;
 }
 
-async function fetchAndProcessImage(imageUrl) {
-    try {
-        // Fetch the image as a blob
-        const imageResponse = await fetch(imageUrl);
-        const blob = await imageResponse.blob();
-
-        // Convert blob to base64
-        const base64Image = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
-
-        // Pass the base64 string to your existing Gemini function
-        return await handleImageTranslation(base64Image);
-    } catch (error) {
-        throw new Error(`Failed to fetch image from URL: ${error.message}`);
-    }
-}
-
-async function handleImageTranslation(base64Image) {
+async function translateImage(base64Image) {
     const { geminiApiKey, selectedModel } = await chrome.storage.local.get(['geminiApiKey', 'selectedModel']);
+    if (!geminiApiKey) throw new Error('API Key not found. Please save it in the MangaLens popup.');
 
-    if (!geminiApiKey) {
-        throw new Error('API Key not found. Please save it in the MangaLens popup.');
-    }
-
-    const modelToUse = selectedModel || 'gemini-3-flash-preview';
-
+    const modelToUse = selectedModel || 'gemini-3.1-flash-preview';
     const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
 
     const prompt = `
@@ -112,9 +95,8 @@ async function handleImageTranslation(base64Image) {
       Each object must have exactly these three keys:
       1. "box_2d": An array of 4 integers between 0 and 1000 representing the bounding box [ymin, xmin, ymax, xmax].
       2. "translation": The English translation.
-      3. "type": Categorize the text as either "dialogue" (for speech bubbles, thought bubbles, and narration boxes) or "sfx" (for background text, sound effects, floating text, and store signs).
+      3. "type": Categorize the text as either "dialogue" or "sfx".
     `;
-
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
@@ -136,12 +118,13 @@ async function handleImageTranslation(base64Image) {
                         type: "OBJECT",
                         properties: {
                             translation: { type: "STRING" },
+                            type: { type: "STRING" },
                             box_2d: {
                                 type: "ARRAY",
                                 items: { type: "INTEGER" }
                             }
                         },
-                        required: ["translation", "box_2d"]
+                        required: ["translation", "type", "box_2d"]
                     }
                 }
             }
@@ -154,6 +137,5 @@ async function handleImageTranslation(base64Image) {
     }
 
     const result = await response.json();
-    const jsonString = result.candidates[0].content.parts[0].text;
-    return JSON.parse(jsonString);
+    return JSON.parse(result.candidates[0].content.parts[0].text);
 }
