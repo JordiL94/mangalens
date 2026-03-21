@@ -151,8 +151,9 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
             bubble.style.minHeight = `${(ymax - ymin) / 10}%`;
 
             if (item.type === 'dialogue') {
-                bubble.style.minWidth = '140px';
-                bubble.style.maxWidth = '240px';
+                bubble.style.width = `calc(${(xmax - xmin) / 10}% + 30px)`;
+                // bubble.style.minWidth = '80px';
+                // bubble.style.maxWidth = '240px';
             } else {
                 bubble.style.width = `${(xmax - xmin) / 10}%`;
             }
