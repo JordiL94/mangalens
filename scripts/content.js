@@ -27,17 +27,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         handleToggleShortcut();
     } else if (request.action === "toggle_buttons") {
         showButtonsConfig = request.show;
-        document.querySelectorAll('.mangalens-inline-btn').forEach(btn => {
-            if (!showButtonsConfig) {
-                btn.style.display = 'none';
-            } else {
-                if (btn.innerText === '🔄') {
-                    const mainBtn = btn.previousElementSibling;
-                    btn.style.display = (mainBtn && mainBtn.innerText === '👁️') ? 'block' : 'none';
-                } else {
-                    btn.style.display = 'block';
-                }
-            }
+
+        // Target the group instead of individual buttons
+        document.querySelectorAll('.mangalens-btn-group').forEach(group => {
+            group.style.display = showButtonsConfig ? 'flex' : 'none';
         });
     }
 });
@@ -129,8 +122,6 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
         const targetId = targetImage.dataset.mangalensId;
         document.querySelectorAll(`.mangalens-container[data-mangalens-id="${targetId}"], .mangalens-loader[data-mangalens-id="${targetId}"]`).forEach(el => el.remove());
     }
-
-    injectStyles();
 
     const loader = document.createElement('div');
     loader.className = 'mangalens-loader';
@@ -263,34 +254,39 @@ function injectInlineButton(targetImage) {
     }
     const panelId = targetImage.dataset.mangalensId;
 
+    // --- NEW: THE PILL CONTAINER ---
+    const btnGroup = document.createElement('div');
+    btnGroup.className = 'mangalens-btn-group';
+    btnGroup.dataset.groupId = panelId;
+    btnGroup.style.display = showButtonsConfig ? 'flex' : 'none';
+
+    // --- 1. Main Toggle Button (No longer absolute) ---
     const btn = document.createElement('button');
     btn.dataset.btnId = panelId;
     btn.innerText = '✨';
     btn.title = `Translate Panel (${modKey} + T)`;
     btn.className = 'mangalens-inline-btn';
-    btn.style.position = 'absolute';
-    btn.style.zIndex = '2147483647';
     btn.style.setProperty('pointer-events', 'auto', 'important');
-    btn.style.display = showButtonsConfig ? 'block' : 'none';
 
+    // --- 2. Refresh Button (No longer absolute) ---
     const refreshBtn = document.createElement('button');
     refreshBtn.dataset.refreshBtnId = panelId;
     refreshBtn.innerText = '🔄';
     refreshBtn.title = `Reload Translation (${modKey} + R)`;
     refreshBtn.className = 'mangalens-inline-btn';
-    refreshBtn.style.position = 'absolute';
-    refreshBtn.style.zIndex = '2147483647';
     refreshBtn.style.setProperty('pointer-events', 'auto', 'important');
-    refreshBtn.style.display = 'none';
+    refreshBtn.style.display = 'none'; // Hidden initially
+
+    // Put buttons in the pill, put the pill in the DOM
+    btnGroup.appendChild(btn);
+    btnGroup.appendChild(refreshBtn);
 
     const container = targetImage.offsetParent || document.body;
-    container.appendChild(btn);
-    container.appendChild(refreshBtn);
+    container.appendChild(btnGroup);
 
-    // Shield against parent listeners
+    // The Shield now protects the whole group
     const stopHijack = (e) => e.stopPropagation();
-
-    [btn, refreshBtn].forEach(el => {
+    [btnGroup].forEach(el => {
         el.addEventListener('mousedown', stopHijack);
         el.addEventListener('mouseup', stopHijack);
         el.addEventListener('pointerdown', stopHijack);
@@ -362,8 +358,7 @@ function injectInlineButton(targetImage) {
 
     function syncBtn() {
         if (!targetImage.isConnected) {
-            btn.remove();
-            refreshBtn.remove();
+            btnGroup.remove(); // Remove the group!
             return;
         }
 
@@ -379,12 +374,9 @@ function injectInlineButton(targetImage) {
             newLeft = `${(imgRect.left - containerRect.left) + container.scrollLeft + 16}px`;
         }
 
-        if (btn.style.top !== newTop) btn.style.top = newTop;
-        if (btn.style.left !== newLeft) btn.style.left = newLeft;
-
-        if (refreshBtn.style.top !== newTop) refreshBtn.style.top = newTop;
-        const refreshLeft = `${parseFloat(newLeft) + 48}px`;
-        if (refreshBtn.style.left !== refreshLeft) refreshBtn.style.left = refreshLeft;
+        // Just move the pill, flexbox handles the rest!
+        if (btnGroup.style.top !== newTop) btnGroup.style.top = newTop;
+        if (btnGroup.style.left !== newLeft) btnGroup.style.left = newLeft;
 
         requestAnimationFrame(syncBtn);
     }
@@ -515,7 +507,7 @@ function keepOverlaySynced(overlayElement, targetImage) {
 
 
 // Styles
-function injectStyles() {
+(function() {
     if (document.getElementById('mangalens-styles')) return;
 
     const style = document.createElement('style');
@@ -585,22 +577,39 @@ function injectStyles() {
     @keyframes spin { 
       to { transform: rotate(360deg); } 
     }
-    .mangalens-inline-btn {
-      z-index: 10000;
-      background: rgba(15, 17, 21, 0.7);
-      backdrop-filter: blur(4px);
-      border: 1px solid rgba(139, 92, 246, 0.5);
-      border-radius: 8px;
-      padding: 8px 12px;
-      cursor: pointer;
-      font-size: 16px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    .mangalens-btn-group {
+      position: absolute;
+      z-index: 2147483647;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      background: rgba(15, 17, 21, 0.3);
+      backdrop-filter: blur(2px);
+      border-radius: 20px; 
+      padding: 4px;
       transition: all 0.2s ease;
+      opacity: 0.4; 
     }
-    .mangalens-inline-btn:hover {
-      background: rgba(139, 92, 246, 0.8);
-      transform: scale(1.05);
+    .mangalens-btn-group:hover {
+      opacity: 1; 
+      background: rgba(15, 17, 21, 0.85); 
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .mangalens-btn-group .mangalens-inline-btn {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      padding: 4px 8px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 16px;
+      transition: background 0.2s;
+      color: white;
+    }
+    .mangalens-btn-group .mangalens-inline-btn:hover {
+      background: rgba(255, 255, 255, 0.1); /* Subtle highlight on hover */
+      transform: none; 
     }
   `;
     document.head.appendChild(style);
-}
+})();
