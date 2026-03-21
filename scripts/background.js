@@ -104,13 +104,16 @@ async function handleImageTranslation(base64Image) {
     const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
 
     const prompt = `
-    You are an expert manga translator and OCR system. 
-    Carefully scan the ENTIRE image and identify EVERY distinct block of text. This includes speech bubbles, text on phone screens, thought bubbles, and background text.
-    Translate the Japanese text to natural-sounding English.
-    
-    For spatial coordinates, you must use Gemini's native 1000x1000 grid. 
-    Provide the bounding box as an array of 4 integers between 0 and 1000: [ymin, xmin, ymax, xmax].
-  `;
+      You are an expert manga translator and OCR system. 
+      Carefully scan the ENTIRE image and identify EVERY distinct block of text.
+      Translate the Japanese text to natural-sounding English.
+      
+      You MUST return a valid JSON array of objects. Do NOT wrap the JSON in markdown blocks (like \`\`\`json). Just the raw JSON.
+      Each object must have exactly these three keys:
+      1. "box_2d": An array of 4 integers between 0 and 1000 representing the bounding box [ymin, xmin, ymax, xmax].
+      2. "translation": The English translation.
+      3. "type": Categorize the text as either "dialogue" (for speech bubbles, thought bubbles, and narration boxes) or "sfx" (for background text, sound effects, floating text, and store signs).
+    `;
 
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${geminiApiKey}`, {

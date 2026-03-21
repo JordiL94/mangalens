@@ -15,6 +15,55 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     background-color: var(--bg-color);
     color: var(--text-main);
+    opacity: 0;
+    transition: opacity 0.15s ease-in;
+}
+
+body.loaded {
+    opacity: 1; /* Fade in once JS finishes */
+}
+
+.tab-nav {
+    display: flex;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 0 10px;
+}
+
+.tab-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 14px 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+    color: var(--text-main);
+}
+
+.tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.view {
+    display: none; /* Hide all views by default */
+    animation: fadeIn 0.2s ease;
+}
+
+.view.active {
+    display: block; /* Show only the active view */
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .container {
@@ -61,6 +110,7 @@ h1 {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    margin-bottom: 12px;
 }
 
 .input-group {
@@ -165,7 +215,6 @@ select option {
 }
 
 .toggle-group {
-    margin-bottom: 20px;
 }
 
 .switch-container {
@@ -228,4 +277,12 @@ select option {
 
 .switch input:focus + .slider {
     box-shadow: 0 0 1px var(--accent);
+}
+
+.btn-secondary.danger {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+.btn-secondary.danger:hover {
+    background: rgba(239, 68, 68, 0.1);
 }

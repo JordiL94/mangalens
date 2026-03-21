@@ -1,16 +1,19 @@
 // State & configuration
 let showButtonsConfig = true;
+let defaultStudyModeConfig = false;
 
 // Detect OS to show the correct keyboard shortcut in tooltips
 const isMac = navigator.userAgent.includes('Mac');
 const modKey = isMac ? 'Ctrl' : 'Alt';
 
-chrome.storage.local.get(['showInlineBtns'], (result) => {
+chrome.storage.local.get(['showInlineBtns', 'defaultStudyMode'], (result) => {
     if (result.showInlineBtns !== undefined) {
         showButtonsConfig = result.showInlineBtns;
     }
+    if (result.defaultStudyMode !== undefined) {
+        defaultStudyModeConfig = result.defaultStudyMode; // <-- LOAD STATE
+    }
 });
-
 
 // Event listeners & observers
 if (window.navigation) {
@@ -25,10 +28,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         handleReloadShortcut(request.shortcutScreenshot);
     } else if (request.action === "toggle_visibility") {
         handleToggleShortcut();
-    } else if (request.action === "toggle_buttons") {
-        showButtonsConfig = request.show;
+    } else if (request.action === "update_settings") {
+        // LIVE UPDATE BOTH VARIABLES!
+        showButtonsConfig = request.showBtns;
+        defaultStudyModeConfig = request.studyMode;
 
-        // Target the group instead of individual buttons
+        // Sync the physical Ghost Pills visibility
         document.querySelectorAll('.mangalens-btn-group').forEach(group => {
             group.style.display = showButtonsConfig ? 'flex' : 'none';
         });
@@ -169,6 +174,10 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
         const overlayContainer = document.createElement('div');
         overlayContainer.className = 'mangalens-container';
 
+        if (defaultStudyModeConfig) {
+            overlayContainer.classList.add('mangalens-study-mode');
+        }
+
         if (!isScreenshotMode) {
             overlayContainer.dataset.mangalensId = targetImage.dataset.mangalensId;
         } else {
@@ -193,8 +202,17 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
             bubble.style.top = `${centerY}%`;
             bubble.style.left = `${centerX}%`;
             bubble.style.transform = 'translate(-50%, -50%)';
-            bubble.style.width = `${(xmax - xmin) / 10}%`;
             bubble.style.minHeight = `${(ymax - ymin) / 10}%`;
+
+            // THE SMART LAYOUT ROUTER
+            if (item.type === 'dialogue') {
+                // Dialogue gets a comfortable horizontal reading shape
+                bubble.style.minWidth = '140px';
+                bubble.style.maxWidth = '240px';
+            } else {
+                // SFX and background signs get locked to their strict, narrow bounding box
+                bubble.style.width = `${(xmax - xmin) / 10}%`;
+            }
 
             overlayContainer.appendChild(bubble);
         });
@@ -203,9 +221,11 @@ async function injectTranslationUI(targetImage = null, shortcutPayload = null) {
 
         if (linkedMainBtn) {
             linkedMainBtn.innerText = '👁️';
-            linkedMainBtn.title = `Hide Translations (${modKey} + H)`;
+            linkedMainBtn.style.opacity = defaultStudyModeConfig ? '0.5' : '1';
+            linkedMainBtn.title = `${defaultStudyModeConfig ? 'Unhide' : 'Hide'} Translations (${modKey} + H)`;
         }
-        if (linkedRefreshBtn && showButtonsConfig) linkedRefreshBtn.style.display = 'block';
+        if (linkedRefreshBtn && showButtonsConfig)
+            linkedRefreshBtn.style.display = (!defaultStudyModeConfig && showButtonsConfig) ? 'block' : 'none';
 
         // Event cleanup
         if (isScreenshotMode) {
