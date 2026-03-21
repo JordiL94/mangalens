@@ -22,9 +22,9 @@
             </div>
         </header>
 
-        <div class="card" style="margin-top: 20px;">
+        <div class="card mt-lg">
             <button id="translateBtn" class="btn btn-primary">
-                <span style="font-size: 1.1em;">文A</span> Translate Current Page
+                <span class="btn-icon">文A</span> Translate Current Page
             </button>
         </div>
     </div>
@@ -56,7 +56,7 @@
                 </label>
             </div>
 
-            <div class="input-group toggle-group" style="margin-bottom: 0;">
+            <div class="input-group toggle-group">
                 <label class="switch-container">
                     <span class="switch-description">DEFAULT TO STUDY MODE</span>
                     <div class="switch">
@@ -67,19 +67,21 @@
             </div>
         </div>
 
-        <button id="saveBtn" class="btn btn-secondary" style="margin-top: 10px;">Save Settings</button>
+        <div class="action-group">
+            <button id="saveBtn" class="btn btn-secondary">Save Settings</button>
 
-        <div id="cacheManager" style="margin-top: 10px;">
-            <button id="initClearBtn" class="btn btn-secondary danger">Clear Image Cache</button>
+            <div id="cacheManager">
+                <button id="initClearBtn" class="btn btn-secondary danger">Clear Image Cache</button>
 
-            <div id="cacheWarning" style="display: none; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 12px; border-radius: 8px; margin-top: 8px;">
-                <p style="margin: 0 0 10px 0; font-size: 0.8rem; color: #fca5a5; line-height: 1.4;">
-                    Select what to wipe. This cannot be undone and re-translating will cost API tokens.
-                </p>
-                <div style="display: flex; flex-direction: column; gap: 6px;">
-                    <button id="wipePageBtn" class="btn btn-secondary danger" style="font-size: 0.8rem; padding: 8px;">Clear Current Page Only</button>
-                    <button id="wipeAllBtn" class="btn btn-primary" style="background: #dc2626; font-size: 0.8rem; padding: 8px;">Clear All Sites</button>
-                    <button id="cancelWipeBtn" class="btn btn-secondary" style="font-size: 0.8rem; padding: 8px;">Cancel</button>
+                <div id="cacheWarning" class="warning-box">
+                    <p class="warning-text">
+                        Select what to wipe. This cannot be undone and re-translating will cost API tokens.
+                    </p>
+                    <div class="warning-actions">
+                        <button id="wipePageBtn" class="btn btn-secondary danger btn-sm">Clear Current Page Only</button>
+                        <button id="wipeAllBtn" class="btn btn-primary danger-solid btn-sm">Clear All Sites</button>
+                        <button id="cancelWipeBtn" class="btn btn-secondary btn-sm">Cancel</button>
+                    </div>
                 </div>
             </div>
         </div>
