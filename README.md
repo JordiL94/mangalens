@@ -26,7 +26,7 @@ Achieving perfect overlay placement is difficult, especially on responsive websi
 ## How it Works
 
 1.  **Detection:** A high-performance `MutationObserver` scans the page and adds a sleek ✨ button to the top-left corner of any large manga-sized image panel.
-2.  **Multimodal Request:** Clicking ✨ triggers a process that fetches the panel's URL and sends it to your `background.js`, which securely performs an API call to **Gemini 3 Flash-Preview**.
+2.  **Multimodal Request:** Clicking ✨ triggers a process that fetches the panel's URL and sends it to your `background.js`, which securely performs an API call to **Gemini 3 Flash**.
 3.  **Intelligent Translation:** The prompt is highly optimized for performance and accuracy:
     * It forces Gemini into a low thinking level (`thinking_config: { thinking_level: "low" }`) to prioritize raw speed and keep the UI snappy.
     * It specifies a strict JSON schema output, ensuring a parseable result.

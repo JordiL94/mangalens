@@ -83,7 +83,7 @@ async function translateImage(base64Image) {
     const { geminiApiKey, selectedModel } = await chrome.storage.local.get(['geminiApiKey', 'selectedModel']);
     if (!geminiApiKey) throw new Error('API Key not found. Please save it in the MangaLens popup.');
 
-    const modelToUse = selectedModel || 'gemini-3.1-flash-preview';
+    const modelToUse = selectedModel || 'gemini-3.1-flash';
     const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
 
     const prompt = `
